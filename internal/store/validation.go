@@ -163,7 +163,7 @@ func normalizeSettings(s core.Settings) (core.Settings, error) {
 		}
 		u, err := url.Parse(s.BaseURL)
 		if err != nil || u == nil || u.Hostname() == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || !validPort(u) {
-			return s, invalid("base URL must be an HTTP(S) origin, for example https://tv.example.com")
+			return s, invalid("base URL must be an HTTP(S) origin, for example http://tv.example.com:9000")
 		}
 		u.Path = ""
 		s.BaseURL = u.String()

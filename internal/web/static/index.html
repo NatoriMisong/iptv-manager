@@ -56,7 +56,7 @@
         <div class="page-heading"><div><p class="eyebrow">MAKE IT YOURS</p><h1>服务设置</h1><p class="muted">配置默认播放方式、访问地址和流量预算。</p></div></div>
         <div class="settings-layout">
           <form id="settings-form" class="panel settings-card">
-            <h2>连接与播放</h2><label for="base-url">公开访问地址</label><input id="base-url" name="base_url" type="url" required placeholder="https://tv.example.com"><p class="field-help">填写播放器可访问的 HTTPS 域名，不包含末尾路径。首次使用请先保存此设置。</p>
+            <h2>连接与播放</h2><label for="base-url">公开访问地址</label><input id="base-url" name="base_url" type="url" required placeholder="http://tv.example.com:9000"><p class="field-help">填写播放器可访问的 HTTP 地址（域名或 IP，包含端口），不包含末尾路径。自行配置 HTTPS 后，填写对应的 HTTPS 地址。首次使用请先保存此设置。</p>
             <div class="form-grid"><div><label for="default-mode">默认播放方式</label><select id="default-mode" name="default_mode"><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div><label for="default-quality">默认画质上限</label><select id="default-quality" name="default_quality"><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
             <label for="upstream-proxy">服务器出站代理</label><input id="upstream-proxy" name="upstream_proxy" type="password" autocomplete="off" placeholder="direct 或 http://proxy:port"><p class="field-help">默认 direct，服务器直接访问 YouTube。支持 HTTP、HTTPS、SOCKS5 代理地址，按需填写。</p>
             <label for="monthly-budget">月度流量预算（GB）</label><input id="monthly-budget" name="monthly_budget_gb" type="number" min="1" max="1000000" required><p class="field-help">每月按 UTC 时间统计。服务商可能采用不同的计费口径。</p>

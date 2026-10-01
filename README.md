@@ -44,7 +44,7 @@
 
 ## Docker 部署
 
-需要一台能访问 YouTube 的 Linux x64 服务器，已安装 Docker Engine 和 Docker Compose 插件。域名的 A 记录应指向服务器；如果存在 AAAA 记录，IPv6 也需要正确可达。
+需要一台能访问 YouTube 的 Linux x64 服务器，已安装 Docker Engine 和 Docker Compose 插件。程序通过 HTTP 提供服务，默认端口为 9000，可使用服务器 IP 或域名访问。使用域名时，A 记录应指向服务器；如果存在 AAAA 记录，IPv6 也需要正确可达。
 
 在项目目录中准备配置：
 
@@ -56,69 +56,61 @@ chmod 600 .env
 编辑 `.env`，至少设置以下项目：
 
 ```dotenv
-DOMAIN=tv.example.com
-PUBLIC_URL=https://tv.example.com
+PUBLIC_URL=http://tv.example.com:9000
+HTTP_BIND=0.0.0.0
+HTTP_PORT=9000
 ADMIN_PASSWORD='请替换为自己生成的高强度密码'
 ```
 
-`DOMAIN` 只写主机名，`PUBLIC_URL` 写完整 HTTP(S) origin，例如 `https://tv.example.com`，不能附加 `/youtube` 等路径。管理密码必须为 12–72 **字节**；中文字符通常占多个字节。可用 `openssl rand -hex 24` 生成随机密码，然后保存到密码管理器中。
+`PUBLIC_URL` 填写播放器实际访问的完整地址，例如 `http://tv.example.com:9000` 或 `http://你的服务器IP:9000`，不能附加 `/youtube` 等路径。`HTTP_BIND` 和 `HTTP_PORT` 控制 Docker 在宿主机发布的地址与端口；修改端口后，同步修改 `PUBLIC_URL`。管理密码必须为 12–72 **字节**；中文字符通常占多个字节。可用 `openssl rand -hex 24` 生成随机密码，然后保存到密码管理器中。
 
-### 使用内置 Caddy 配置自动申请 HTTPS
-
-确认域名指向服务器，并放行入站 TCP 80、443。若已有服务占用这些端口，使用下方“现有反向代理”方式。
-
-```bash
-docker compose -f compose.yml -f compose.caddy.yml up -d --build
-docker compose -f compose.yml -f compose.caddy.yml logs --tail=100 app
-```
-
-打开 `https://tv.example.com`，使用 `.env` 中设置的初始密码登录。Caddy 首次签发证书需要域名、公网连通性和正确系统时间。
-
-查看或停止这个部署时，同样带上两个 Compose 文件：
-
-```bash
-docker compose -f compose.yml -f compose.caddy.yml ps
-docker compose -f compose.yml -f compose.caddy.yml down
-```
-
-### 使用现有反向代理
+放行服务器防火墙和云平台安全组中的入站 TCP 9000（修改端口时使用对应端口），然后启动：
 
 ```bash
 docker compose up -d --build
+docker compose logs --tail=100 app
+```
+
+打开 `http://tv.example.com:9000`，使用 `.env` 中设置的初始密码登录。默认只启动应用容器，证书和 HTTPS 由使用者按需自行配置。
+
+查看或停止部署：
+
+```bash
+docker compose ps
+docker compose down
+```
+
+默认端口的健康检查：
+
+```bash
 curl -fsS http://127.0.0.1:9000/healthz
 ```
 
-默认只把应用端口绑定到宿主机 `127.0.0.1:9000`，由现有的 Nginx 或 Caddy 对外提供 HTTPS。不要把内部端口直接改成公网 HTTP 作为长期部署方式。
-
 `/healthz` 返回 `ok` 表示应用和数据库能够响应，不代表 YouTube 或某个频道已验证可播。
 
-例如，已有 Caddy 可以增加：
+### 可选：自行使用 Nginx 提供 HTTPS
 
-```caddyfile
-tv.example.com {
-    reverse_proxy 127.0.0.1:9000
-}
-```
+需要 HTTPS 时，自行安装 Nginx、配置域名和证书，将 HTTPS 请求转发到应用的 HTTP 端口。若 Nginx 运行在同一宿主机，可以将 `.env` 的 `HTTP_BIND` 改为 `127.0.0.1`，保留 `HTTP_PORT=9000`，然后执行 `docker compose up -d app` 使端口配置生效。
 
-如果反向代理也运行在另一个容器中，`127.0.0.1` 指向该代理容器自身。应将两个服务连接到同一 Docker 网络，再使用应用服务名和容器端口作为上游。
-
-已有 HTTPS Nginx 的对应 `server` 块中可使用：
+在已配置好证书的 Nginx `server` 块中加入：
 
 ```nginx
 location / {
     proxy_pass http://127.0.0.1:9000;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_buffering off;
     proxy_read_timeout 90s;
 }
 ```
 
-保留原始 `Host`，以便管理请求的来源验证正确工作。不要对带播放令牌的清单或媒体地址配置公共 CDN 缓存。应用不把任意转发请求头当作可信公网域名，订阅地址以保存的“服务访问地址”为准。
+保留原始 `Host`（包括非默认端口），以便管理请求的来源验证正确工作。如果 Nginx 也运行在另一个容器中，`127.0.0.1` 指向该代理容器自身；应将两个服务连接到同一 Docker 网络，再使用 `http://app:9000` 作为上游。
+
+首次部署时，将 `PUBLIC_URL` 设为 `https://tv.example.com`。已有数据库时，在管理页将“公开访问地址”改为对应 HTTPS 地址，再执行 `docker compose restart app`，让自动 Cookie 设置生效，并重新复制订阅。应用不把任意转发请求头当作可信公网域名，订阅地址以保存的“公开访问地址”为准。不要对带播放令牌的清单或媒体地址配置公共 CDN 缓存。
 
 ## 首次使用与 VLC
 
-1. 登录管理页，在“服务设置”中核对服务访问地址，例如 `https://tv.example.com`。
+1. 登录管理页，在“服务设置”中核对服务访问地址，例如 `http://tv.example.com:9000`。
 2. 保持默认播放方式为“服务器中继”、画质上限 720p、出站代理 `direct`。
 3. 在频道列表核对两个初始来源。点击“刷新”会使缓存失效，下一次播放时重新解析。
 4. 点击“复制中继订阅”。在桌面 VLC 中打开 **媒体 → 打开网络串流**，粘贴地址并播放；Windows 快捷键是 `Ctrl+N`。
@@ -130,9 +122,9 @@ location / {
 三种订阅均使用同一组频道，区别在查询参数：
 
 ```text
-https://tv.example.com/playlist.m3u?mode=default&token=你的播放令牌
-https://tv.example.com/playlist.m3u?mode=relay&token=你的播放令牌
-https://tv.example.com/playlist.m3u?mode=direct&token=你的播放令牌
+http://tv.example.com:9000/playlist.m3u?mode=default&token=你的播放令牌
+http://tv.example.com:9000/playlist.m3u?mode=relay&token=你的播放令牌
+http://tv.example.com:9000/playlist.m3u?mode=direct&token=你的播放令牌
 ```
 
 - `default`：先使用单个频道的设置，频道选择继承时使用全局设置。
@@ -151,20 +143,21 @@ https://tv.example.com/playlist.m3u?mode=direct&token=你的播放令牌
 | `LISTEN_ADDR` | `127.0.0.1:9000` | 原生进程监听地址；容器内需监听所有容器网卡 |
 | `ADMIN_PASSWORD` | 无 | 仅数据库尚无管理员密码时必填，长度 12–72 字节 |
 | `ADMIN_PASSWORD_FILE` | 无 | 原生程序或自定义容器部署可从该文件读取初始密码；设置后优先于 `ADMIN_PASSWORD` |
-| `PUBLIC_URL` | 无 | 当数据库服务地址为空时初始化，例如 `https://tv.example.com` |
+| `PUBLIC_URL` | 无 | 当数据库服务地址为空时初始化，例如 `http://tv.example.com:9000` |
 | `YTDLP_BIN` | `yt-dlp` | yt-dlp 可执行文件路径 |
 | `JS_RUNTIME` | `node` | yt-dlp 使用的 JavaScript 运行时配置 |
 | `COOKIES_FILE` | 无 | 可选 Netscape 格式 Cookies 文件路径，必须在运行环境内可读 |
 | `CACHE_MB` | `32` | 分片缓存容量，单位 MiB，允许 0–128，0 关闭缓存；不是整个应用的内存限制 |
 | `SECURE_COOKIES` | 根据 HTTPS 自动判断 | 管理 Cookie 的 Secure 标记；HTTPS 部署应启用 |
-| `DOMAIN` | 无 | Caddy Compose 配置所用的域名，不是应用频道设置 |
+| `HTTP_BIND` | `0.0.0.0` | Compose 发布端口的宿主机绑定地址；同机 Nginx 反代可改为 `127.0.0.1` |
+| `HTTP_PORT` | `9000` | Compose 发布的宿主机 HTTP 端口，容器内仍为 9000 |
 | `YTDLP_VERSION` | 见 `.env.example` | Compose 构建参数，锁定 yt-dlp 的 PyPI 版本，不是运行时自动更新开关 |
 
 `.env` 只会向容器传递 Compose 文件明确映射的变量。使用 `COOKIES_FILE`、`ADMIN_PASSWORD_FILE` 等可选配置时，需要在自己的 Compose 覆盖文件中添加对应 `environment` 和只读文件挂载；仅在 `.env` 添加名称并不自动生效。默认 Compose 仍要求提供 `ADMIN_PASSWORD`，文件形式的初始化需要同步调整该环境变量映射。
 
 已有数据库时，重新设置 `ADMIN_PASSWORD` **不会重置密码**。日常修改密码请使用管理页“修改管理密码”；修改后所有管理会话退出登录。重启应用也会清空管理会话，但不会删除配置和播放令牌。
 
-已有服务访问地址时，修改 `.env` 中的 `PUBLIC_URL` 不覆盖数据库设置。更换域名后，在管理页更新服务访问地址，再重新复制订阅。如果由 HTTP 改为 HTTPS，同时核对 Secure Cookie 配置并重启应用。
+已有服务访问地址时，修改 `.env` 中的 `PUBLIC_URL` 不覆盖数据库设置。更换域名后，在管理页更新服务访问地址，再重新复制订阅。切换 HTTP/HTTPS 后，重启应用以更新自动 Cookie 设置；HTTP 使用非 Secure Cookie，HTTPS 使用 Secure Cookie。
 
 代理填写示例：
 
@@ -187,7 +180,7 @@ socks5://proxy.example.com:1080
 - 无人观看时不主动下载视频。播放器可能预取若干分片，因此关闭界面与最后一个网络请求之间可能有短暂间隔。
 - 720p 是清晰度上限，不是固定码率。若没有符合上限的可用格式，服务不会自动转码或偷偷选择更高分辨率。
 
-默认 Compose 将应用容器内存限制为 640 MiB、CPU 限制为 1 核，可选 Caddy 内存限制为 96 MiB。镜像将 Go 的软内存目标设为 192 MiB；它不约束外部 Python/Node 进程，也不是整个容器的硬内存上限。给宿主机保留的余量仍需结合其他服务评估。
+默认 Compose 将应用容器内存限制为 640 MiB、CPU 限制为 1 核。镜像将 Go 的软内存目标设为 192 MiB；它不约束外部 Python/Node 进程，也不是整个容器的硬内存上限。给宿主机保留的余量仍需结合其他服务评估。
 
 按每台设备平均 5 Mbps 估算，一个观看小时约产生 **2.25 GB** 服务器视频出站流量。一台设备每天 4 小时、30 天约 270 GB；两台设备各观看相同时长约 540 GB，另留协议和重试余量。两台同看一个频道时，发给各自设备的出站流量仍分别计算。
 
@@ -214,7 +207,7 @@ docker compose build --pull app
 docker compose up -d app
 ```
 
-使用 Caddy 覆盖文件的部署，给上述命令同样加上 `-f compose.yml -f compose.caddy.yml`。更新前保留旧镜像或版本标签。回退使用旧镜像和兼容的数据备份；未来若数据库结构升级，旧程序可能拒绝打开新结构，不能假设任意版本都能直接共用数据库。
+更新前保留旧镜像或版本标签。回退使用旧镜像和兼容的数据备份；未来若数据库结构升级，旧程序可能拒绝打开新结构，不能假设任意版本都能直接共用数据库。
 
 ## 本地开发与检查
 
@@ -229,7 +222,7 @@ export PUBLIC_URL=http://127.0.0.1:9000
 go run ./cmd/youtube-tv
 ```
 
-打开 `http://127.0.0.1:9000`。此处 HTTP 仅用于本机开发，不适用于经公网传送密码和播放令牌。
+打开 `http://127.0.0.1:9000`。原生程序默认仅监听本机；在服务器上直接运行并需要外部访问时，另设 `LISTEN_ADDR=0.0.0.0:9000`，同时将 `PUBLIC_URL` 设为客户端可访问的地址。
 
 运行检查：
 
@@ -257,13 +250,13 @@ internal/web/       管理 API 和嵌入式中文网页
 
 | 现象 | 检查方法 |
 |---|---|
-| 登录成功但订阅提示未设置服务地址 | 在服务设置中填写客户端实际能访问的域名 origin；首次未配置 `PUBLIC_URL` 时不会猜测公网域名 |
+| 登录成功但订阅提示未设置服务地址 | 在服务设置中填写客户端实际能访问的 HTTP(S) 地址（域名或 IP，包含端口）；首次未配置 `PUBLIC_URL` 时不会猜测公网域名 |
 | 显示未开播 | 确认链接仍是正在直播的视频，不能用预约、回放或已结束直播代替 |
 | 提示没有符合条件的 HLS | 查看该频道在目标服务器的可用格式；尝试提高画质上限，但不会通过转码补齐来源 |
 | YouTube 要求登录或机器人验证 | 核对服务器出口、yt-dlp 和 JavaScript 运行时版本；确有需要时配置自己的 Cookies 文件，并单独验证该出口可用性 |
 | 中继正常，直连失败 | 客户端可能无法访问 YouTube，或来源绑定服务器出口；改用中继订阅 |
-| 浏览器能登录，但 VLC 播放失败 | 核对域名证书、播放令牌、来源状态；在 VLC 日志区分清单请求失败和媒体请求失败 |
-| HTTP 开发环境登录后立刻失效 | 核对是否误启用了 Secure Cookie；仅本机 HTTP 测试时关闭，正式 HTTPS 环境保持启用 |
+| 浏览器能登录，但 VLC 播放失败 | 核对访问地址、端口、播放令牌和来源状态；使用 HTTPS 时检查证书；在 VLC 日志区分清单请求失败和媒体请求失败 |
+| HTTP 登录后立刻失效 | 核对已保存的公开访问地址是否仍为 HTTPS，或是否显式启用了 Secure Cookie；修改后重启应用，HTTP 下应为非 Secure Cookie |
 | 换域名后订阅仍指向旧地址 | 修改数据库中的服务访问地址；已有设置不会被 `PUBLIC_URL` 自动覆盖 |
 | 改了 `.env` 的密码仍无法登录 | 环境变量只初始化新数据库；已有实例通过管理页修改密码 |
 | 持续卡顿或内存升高 | 先降低画质、仅播放一路，并用 `docker stats --no-stream` 查看应用及宿主机资源；检查线路和流量额度 |
