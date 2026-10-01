@@ -1,0 +1,303 @@
+'use strict';
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+let state = null;
+let csrf = '';
+let toastTimer;
+let busy = false;
+function toast(message, failed = false) {
+  const el = $('#toast');
+  el.textContent = message;
+  el.classList.toggle('failed', failed);
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 5000);
+}
+function showLogin() {
+  state = null;
+  csrf = '';
+  $('#app').hidden = true;
+  $('#login-screen').hidden = false;
+  $$('dialog[open]').forEach(d => d.close());
+  $('#login-password').focus();
+}
+async function api(path, { method = 'GET', body } = {}) {
+  const headers = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (method !== 'GET') headers['X-CSRF-Token'] = csrf;
+  const response = await fetch(`/api${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin', cache: 'no-store' });
+  const result = await response.json();
+  if (!response.ok) {
+    if (response.status === 401 && path !== '/login') showLogin();
+    throw new Error(result.error || `请求失败（${response.status}）`);
+  }
+  return result;
+}
+async function loadState({ background = false } = {}) {
+  const next = await api('/state');
+  state = next;
+  csrf = next.csrf;
+  $('#login-screen').hidden = true;
+  $('#app').hidden = false;
+  renderChannels();
+  renderStats();
+  $('#version').textContent = next.version ? `v${next.version.replace(/^v/, '')}` : '';
+  if (!background) fillSettings();
+}
+function renderStats() {
+  const channels = state.channels || [];
+  $('#total-count').textContent = channels.length;
+  $('#table-count').textContent = channels.length;
+  $('#enabled-count').textContent = `${channels.filter(c => c.enabled).length} 个启用 · ${channels.filter(c => !c.enabled).length} 个停用`;
+  const gb = Math.max(0, state.traffic?.bytes || 0) / 1e9;
+  $('#traffic-value').textContent = gb.toFixed(2);
+  $('#budget-value').textContent = state.settings.monthly_budget_gb;
+  const percent = state.settings.monthly_budget_gb > 0 ? gb / state.settings.monthly_budget_gb * 100 : 0;
+  $('#budget-progress').value = Math.min(100, percent);
+  $('#budget-note').textContent = percent >= 100 ? '已达到预算，请留意服务商流量额度' : `已使用 ${percent.toFixed(1)}% · ${state.traffic?.month || ''} UTC`;
+}
+function node(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+function action(text, title, fn, className = 'quiet') {
+  const button = node('button', className, text);
+  button.type = 'button';
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  button.addEventListener('click', () => perform(fn));
+  return button;
+}
+async function perform(fn) {
+  if (busy) return;
+  busy = true;
+  try { await fn(); } catch (error) { toast(error.message, true); } finally { busy = false; }
+}
+function renderChannels() {
+  const container = $('#channel-rows');
+  container.replaceChildren();
+  const channels = state.channels || [];
+  $('#empty-state').hidden = channels.length !== 0;
+  $('.table-wrap').hidden = channels.length === 0;
+  channels.forEach((ch, index) => {
+    const row = node('tr');
+    const ordering = node('td');
+    const orderButtons = node('div', 'order-buttons');
+    const up = action('↑', `上移 ${ch.name}`, () => reorder(index, -1));
+    const down = action('↓', `下移 ${ch.name}`, () => reorder(index, 1));
+    up.disabled = index === 0;
+    down.disabled = index === channels.length - 1;
+    orderButtons.append(up, down);
+    ordering.append(orderButtons);
+    const channel = node('td');
+    const cell = node('div', 'channel-cell');
+    const logo = node('div', 'channel-logo', [...ch.name][0] || '▶');
+    if (ch.logo) {
+      const img = new Image();
+      img.alt = '';
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.addEventListener('error', () => img.remove());
+      img.src = ch.logo;
+      logo.replaceChildren(img);
+    }
+    const identity = node('div');
+    const name = node('div', 'channel-name', ch.name);
+    name.title = ch.name;
+    identity.append(name, node('div', 'channel-meta', ch.group || '未分组'));
+    cell.append(logo, identity);
+    channel.append(cell);
+    const mode = node('td');
+    const effectiveMode = ch.mode === 'inherit' ? state.settings.default_mode : ch.mode;
+    mode.append(node('span', 'badge', effectiveMode === 'direct' ? '客户端直连' : '服务器中继'));
+    if (ch.mode === 'inherit') mode.append(node('div', 'channel-meta', '继承全局'));
+    const quality = node('td', '', `${ch.quality || state.settings.default_quality}p`);
+    if (!ch.quality) quality.append(node('div', 'channel-meta', '继承全局'));
+    const source = node('td');
+    const status = state.statuses?.[ch.id];
+    const kind = !ch.enabled ? 'disabled' : status?.state || 'unknown';
+    const labels = { unknown: '未检测', resolving: '解析中', ready: '来源就绪', offline: '未开播', error: '获取失败', disabled: '已停用' };
+    const badge = node('span', `badge status-${Object.hasOwn(labels, kind) ? kind : 'unknown'}`);
+    badge.append(node('span', 'status-dot'), document.createTextNode(labels[kind] || '未检测'));
+    source.append(badge);
+    if (status?.message && ch.enabled) {
+      const note = node('div', 'status-note', status.message);
+      note.title = status.message;
+      source.append(note);
+    }
+    const enabled = node('td');
+    const toggle = action('', `${ch.enabled ? '停用' : '启用'} ${ch.name}`, async () => {
+      await api(`/channels/${encodeURIComponent(ch.id)}`, { method: 'PUT', body: { ...ch, enabled: !ch.enabled } });
+      await loadState({ background: true });
+    }, 'toggle');
+    toggle.setAttribute('role', 'switch');
+    toggle.setAttribute('aria-checked', String(ch.enabled));
+    enabled.append(toggle);
+    const actions = node('td');
+    const buttons = node('div', 'row-actions');
+    buttons.append(action('编辑', `编辑 ${ch.name}`, () => editChannel(ch)), action('刷新来源', `清除 ${ch.name} 来源缓存`, async () => {
+      const result = await api(`/channels/${encodeURIComponent(ch.id)}/refresh`, { method: 'POST' });
+      await loadState({ background: true });
+      toast(result.message);
+    }), action('删除', `删除 ${ch.name}`, async () => {
+      if (!confirm(`删除频道「${ch.name}」？此频道的固定播放地址将失效。`)) return;
+      await api(`/channels/${encodeURIComponent(ch.id)}`, { method: 'DELETE' });
+      await loadState({ background: true });
+      toast('频道已删除');
+    }, 'quiet danger'));
+    actions.append(buttons);
+    row.append(ordering, channel, mode, quality, source, enabled, actions);
+    container.append(row);
+  });
+}
+async function reorder(index, step) {
+  const ids = state.channels.map(c => c.id);
+  [ids[index], ids[index + step]] = [ids[index + step], ids[index]];
+  await api('/reorder', { method: 'POST', body: { ids } });
+  await loadState({ background: true });
+}
+function editChannel(channel) {
+  const form = $('#channel-form');
+  form.reset();
+  $('#channel-error').textContent = '';
+  $('#channel-dialog-title').textContent = channel ? '编辑频道' : '添加频道';
+  const data = channel || { id: '', name: '', url: '', group: '', logo: '', enabled: true, mode: 'inherit', quality: 0, proxy: 'inherit', sort_order: state.channels?.length || 0 };
+  Object.entries(data).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
+  $('details', form).open = false;
+  $('#channel-dialog').showModal();
+}
+function fillSettings() {
+  const form = $('#settings-form');
+  Object.entries(state.settings).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
+  if (!state.settings.base_url) form.elements.namedItem('base_url').value = location.origin;
+}
+function subscription(mode) {
+  const base = (state.settings.base_url || location.origin).replace(/\/+$/, '');
+  const url = new URL(`${base}/playlist.m3u`);
+  url.searchParams.set('mode', mode);
+  url.searchParams.set('token', state.settings.playback_token);
+  return url.toString();
+}
+async function copySubscription(mode) {
+  if (!state.settings.base_url) {
+    $('[data-view="settings"]').click();
+    $('#base-url').focus();
+    toast('请先保存播放器可访问的公开地址，再复制订阅', true);
+    return;
+  }
+  const value = subscription(mode);
+  try {
+    if (!navigator.clipboard) throw new Error('manual');
+    await navigator.clipboard.writeText(value);
+    toast('订阅地址已复制，可在 VLC 中打开网络串流');
+  } catch {
+    $('#copy-value').value = value;
+    $('#copy-dialog').showModal();
+    $('#copy-value').select();
+  }
+}
+$('#login-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = $('button', event.currentTarget);
+  button.disabled = true;
+  $('#login-error').textContent = '';
+  try {
+    const result = await api('/login', { method: 'POST', body: { password: $('#login-password').value } });
+    csrf = result.csrf;
+    $('#login-password').value = '';
+    await loadState();
+  } catch (error) { $('#login-error').textContent = error.message; }
+  finally { button.disabled = false; }
+});
+$('#logout').addEventListener('click', () => perform(async () => { await api('/logout', { method: 'POST' }); showLogin(); }));
+$('#reload').addEventListener('click', () => perform(async () => { await loadState({ background: true }); toast('状态已更新'); }));
+$('#add-channel').addEventListener('click', () => editChannel());
+$('#empty-add').addEventListener('click', () => editChannel());
+$$('[data-view]').forEach(button => button.addEventListener('click', () => {
+  $$('[data-view]').forEach(b => b.classList.toggle('active', b === button));
+  $('#view-channels').hidden = button.dataset.view !== 'channels';
+  $('#view-settings').hidden = button.dataset.view !== 'settings';
+}));
+$$('.close-dialog').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
+$$('[data-subscription]').forEach(button => button.addEventListener('click', () => copySubscription(button.dataset.subscription)));
+$('#channel-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.currentTarget));
+  data.enabled = data.enabled === 'true';
+  data.quality = Number(data.quality);
+  data.sort_order = Number(data.sort_order);
+  data.proxy = data.proxy.trim() || 'inherit';
+  const button = $('button[type="submit"]', event.currentTarget);
+  button.disabled = true;
+  $('#channel-error').textContent = '';
+  try {
+    await api(data.id ? `/channels/${encodeURIComponent(data.id)}` : '/channels', { method: data.id ? 'PUT' : 'POST', body: data });
+    $('#channel-dialog').close();
+    await loadState({ background: true });
+    toast('频道已保存');
+  } catch (error) { $('#channel-error').textContent = error.message; }
+  finally { button.disabled = false; }
+});
+$('#settings-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.currentTarget));
+  data.default_quality = Number(data.default_quality);
+  data.monthly_budget_gb = Number(data.monthly_budget_gb);
+  data.upstream_proxy = data.upstream_proxy.trim() || 'direct';
+  const button = $('button[type="submit"]', event.currentTarget);
+  button.disabled = true;
+  $('#settings-error').textContent = '';
+  try { await api('/settings', { method: 'PUT', body: data }); await loadState(); toast('设置已保存'); }
+  catch (error) { $('#settings-error').textContent = error.message; }
+  finally { button.disabled = false; }
+});
+$('#change-password').addEventListener('click', () => { $('#password-form').reset(); $('#password-error').textContent = ''; $('#password-dialog').showModal(); });
+$('#password-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.currentTarget));
+  const button = $('button[type="submit"]', event.currentTarget);
+  button.disabled = true;
+  $('#password-error').textContent = '';
+  try { await api('/password', { method: 'POST', body: data }); event.target.reset(); showLogin(); toast('密码已更新，请使用新密码登录'); }
+  catch (error) { $('#password-error').textContent = error.message; }
+  finally { button.disabled = false; }
+});
+$('#rotate-token').addEventListener('click', () => perform(async () => {
+  if (!confirm('重置播放令牌会使所有旧订阅和播放地址失效。确认后，需要重新复制订阅到设备。继续？')) return;
+  await api('/token', { method: 'POST' });
+  await loadState();
+  toast('播放令牌已重置，请重新复制订阅地址');
+}));
+$('#backup').addEventListener('click', () => perform(async () => {
+  if (!confirm('导出的配置包含播放令牌及已填写的代理凭据，请保存在可信位置。继续导出？')) return;
+  const data = await api('/backup');
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `youtube-tv-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}));
+$('#restore').addEventListener('click', () => $('#restore-file').click());
+$('#restore-file').addEventListener('change', event => perform(async () => {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  if (file.size > 1024 * 1024) throw new Error('备份文件不能超过 1 MB');
+  if (!confirm('导入会替换当前频道、设置和播放令牌（不修改管理密码）。请确认文件来自可信来源。继续？')) return;
+  let data;
+  try { data = JSON.parse(await file.text()); } catch { throw new Error('文件不是有效的 JSON 备份'); }
+  await api('/restore', { method: 'POST', body: data });
+  await loadState();
+  toast('配置已导入');
+}));
+loadState().catch(error => { if ($('#login-screen').hidden) { showLogin(); $('#login-error').textContent = error.message; } });
+setInterval(() => {
+  if (!state || document.hidden || $$('dialog[open]').length || busy) return;
+  loadState({ background: true }).catch(() => {});
+}, 20000);

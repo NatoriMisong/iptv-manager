@@ -1,0 +1,36 @@
+services:
+  app:
+    image: youtube-tv:local
+    build:
+      context: .
+      args:
+        YTDLP_VERSION: ${YTDLP_VERSION:-2026.8.19}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:9000:9000"
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      CACHE_MB: ${CACHE_MB:-32}
+      SECURE_COOKIES: auto
+    volumes:
+      - app-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    mem_limit: 640m
+    cpus: 1.0
+    pids_limit: 64
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+volumes:
+  app-data:

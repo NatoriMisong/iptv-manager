@@ -1,0 +1,279 @@
+# YouTube TV
+
+面向个人使用的轻量 YouTube 直播 IPTV 服务。服务器维护固定频道地址，生成 M3U 订阅，并按需解析 YouTube 的临时 HLS 来源。VLC 可以选择通过服务器观看，也可以直接连接 YouTube。
+
+设计目标是 Linux x64、1 核 CPU、1 GB 内存、1–2 台观看设备。主程序使用 Go，配置保存在 SQLite；yt-dlp 只在解析或刷新来源时运行。视频由 Go 流式转发，首版不运行 FFmpeg、不重新切片、不转码。
+
+当前本地测试与真实直播的验证边界见 [首版验证记录](docs/verification.md)。
+
+## 功能与边界
+
+- 中文网页管理频道：添加、修改、删除、启停、排序、分组和图标。
+- 随机且固定的频道 ID，排序和编辑不会把原播放地址指向其他频道。
+- 默认、中继、直连三种 M3U 订阅；每个频道可以覆盖全局播放模式。
+- 默认直接访问 YouTube，可配置全局或逐频道 HTTP、HTTPS、SOCKS5 出站代理。
+- 画质上限、来源缓存、提前过期、按需重新解析及手动刷新。
+- 同频道解析请求合并；全局最多一个 yt-dlp 解析进程；有限队列和解析超时。
+- HLS 子清单和资源地址改写，带令牌的媒体转发、范围请求和有限分片缓存。
+- 管理密码、会话鉴权、CSRF 防护、播放令牌与令牌轮换。
+- 月度中继流量统计、预算提示、JSON 配置导入导出。
+
+**首版只选择同一 HLS 格式中同时包含音频和视频的直播来源。** 缺少合适 HLS、只有 DASH、需要合并独立音视频或转码时，会给出明确错误，不会启动高负载的转换流程。当前不支持录制、回看、EPG、自动跟随频道的新直播、代理故障时自动切换出口，也不统计精确在线设备人数。
+
+种子频道使用固定视频 ID：
+
+| 初始名称 | 来源 |
+|---|---|
+| 中天新闻 | <https://www.youtube.com/watch?v=vr3XyVCR4T0> |
+| 东森新闻 51 | <https://www.youtube.com/watch?v=V1p33hqPrUk> |
+
+可以在管理页修改名称。直播方更换视频 ID 后，需要更新频道来源；只要编辑原频道，订阅中的频道 ID 就保持不变。初始频道只在新数据库第一次启动时创建，删除后不会在下次启动时重新出现。
+
+## 两种播放路径
+
+| 路径 | 服务如何工作 | 客户端条件 | 服务器视频流量 |
+|---|---|---|---|
+| 服务器中继 | 解析 YouTube，改写清单，转发音视频分片 | 能访问本服务的域名 | 有 |
+| 客户端直连 | 解析来源后用 HTTP 307 将播放器重定向到 YouTube | 能访问 YouTube，且来源允许该客户端出口使用 | 通常没有 |
+
+直连不是通过服务器解决客户端访问 YouTube 的问题。YouTube 临时 URL 可能绑定解析时的出口或要求额外请求信息，服务器解析成功也不能保证家庭网络的 VLC 能直连播放；失败时选择中继订阅。
+
+“服务器中继”和“服务器出站代理”是独立配置。服务器能直接访问 YouTube 时，将出站代理保持为 `direct`。中继模式仍然会让客户端只访问服务器。使用出站代理时，来源解析和中继获取媒体采用同一出口；代理改变后会重新解析。
+
+来源过期或网络故障时，服务会清除失效解析缓存，在后续播放请求中重新解析。已经开始播放的 VLC 能否自动恢复取决于故障位置和播放器行为；必要时在管理页刷新来源，再重新打开频道。首版不承诺直播跨地址切换时无缝续播。
+
+## Docker 部署
+
+需要一台能访问 YouTube 的 Linux x64 服务器，已安装 Docker Engine 和 Docker Compose 插件。域名的 A 记录应指向服务器；如果存在 AAAA 记录，IPv6 也需要正确可达。
+
+在项目目录中准备配置：
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+编辑 `.env`，至少设置以下项目：
+
+```dotenv
+DOMAIN=tv.example.com
+PUBLIC_URL=https://tv.example.com
+ADMIN_PASSWORD='请替换为自己生成的高强度密码'
+```
+
+`DOMAIN` 只写主机名，`PUBLIC_URL` 写完整 HTTP(S) origin，例如 `https://tv.example.com`，不能附加 `/youtube` 等路径。管理密码必须为 12–72 **字节**；中文字符通常占多个字节。可用 `openssl rand -hex 24` 生成随机密码，然后保存到密码管理器中。
+
+### 使用内置 Caddy 配置自动申请 HTTPS
+
+确认域名指向服务器，并放行入站 TCP 80、443。若已有服务占用这些端口，使用下方“现有反向代理”方式。
+
+```bash
+docker compose -f compose.yml -f compose.caddy.yml up -d --build
+docker compose -f compose.yml -f compose.caddy.yml logs --tail=100 app
+```
+
+打开 `https://tv.example.com`，使用 `.env` 中设置的初始密码登录。Caddy 首次签发证书需要域名、公网连通性和正确系统时间。
+
+查看或停止这个部署时，同样带上两个 Compose 文件：
+
+```bash
+docker compose -f compose.yml -f compose.caddy.yml ps
+docker compose -f compose.yml -f compose.caddy.yml down
+```
+
+### 使用现有反向代理
+
+```bash
+docker compose up -d --build
+curl -fsS http://127.0.0.1:9000/healthz
+```
+
+默认只把应用端口绑定到宿主机 `127.0.0.1:9000`，由现有的 Nginx 或 Caddy 对外提供 HTTPS。不要把内部端口直接改成公网 HTTP 作为长期部署方式。
+
+`/healthz` 返回 `ok` 表示应用和数据库能够响应，不代表 YouTube 或某个频道已验证可播。
+
+例如，已有 Caddy 可以增加：
+
+```caddyfile
+tv.example.com {
+    reverse_proxy 127.0.0.1:9000
+}
+```
+
+如果反向代理也运行在另一个容器中，`127.0.0.1` 指向该代理容器自身。应将两个服务连接到同一 Docker 网络，再使用应用服务名和容器端口作为上游。
+
+已有 HTTPS Nginx 的对应 `server` 块中可使用：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:9000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_read_timeout 90s;
+}
+```
+
+保留原始 `Host`，以便管理请求的来源验证正确工作。不要对带播放令牌的清单或媒体地址配置公共 CDN 缓存。应用不把任意转发请求头当作可信公网域名，订阅地址以保存的“服务访问地址”为准。
+
+## 首次使用与 VLC
+
+1. 登录管理页，在“服务设置”中核对服务访问地址，例如 `https://tv.example.com`。
+2. 保持默认播放方式为“服务器中继”、画质上限 720p、出站代理 `direct`。
+3. 在频道列表核对两个初始来源。点击“刷新”会使缓存失效，下一次播放时重新解析。
+4. 点击“复制中继订阅”。在桌面 VLC 中打开 **媒体 → 打开网络串流**，粘贴地址并播放；Windows 快捷键是 `Ctrl+N`。
+5. 打开 VLC 播放列表切换频道。Android TV 上可在 VLC 的网络串流入口输入相同地址；菜单名称可能因版本不同而变化。
+6. 电脑能够访问 YouTube 时，再试“复制直连订阅”。电视继续使用中继订阅，两者互不冲突。
+
+首次播放通常比后续打开更慢，因为 yt-dlp 需要获取并选择来源。只有实际打开频道才解析和拉取媒体；单纯导入 M3U 不会持续拉流所有频道。
+
+三种订阅均使用同一组频道，区别在查询参数：
+
+```text
+https://tv.example.com/playlist.m3u?mode=default&token=你的播放令牌
+https://tv.example.com/playlist.m3u?mode=relay&token=你的播放令牌
+https://tv.example.com/playlist.m3u?mode=direct&token=你的播放令牌
+```
+
+- `default`：先使用单个频道的设置，频道选择继承时使用全局设置。
+- `relay`：强制所有启用的频道经过服务器中继。
+- `direct`：强制所有启用的频道尝试客户端直连。
+
+订阅和其中的频道、媒体地址都包含播放令牌，拥有地址即可播放。请只保存在自己的设备中。重置令牌后，旧地址和当前媒体请求会失效，需要在设备上重新导入订阅；修改管理密码不会改变播放令牌。
+
+## 设置与环境变量
+
+频道、画质、出站代理、服务访问地址和流量预算通过网页管理，保存在 SQLite 中。环境变量负责进程和首次启动配置：
+
+| 变量 | 默认值 | 含义 |
+|---|---|---|
+| `DATA_DIR` | `./data` | 数据目录；Docker 中由 Compose 指定持久化位置 |
+| `LISTEN_ADDR` | `127.0.0.1:9000` | 原生进程监听地址；容器内需监听所有容器网卡 |
+| `ADMIN_PASSWORD` | 无 | 仅数据库尚无管理员密码时必填，长度 12–72 字节 |
+| `ADMIN_PASSWORD_FILE` | 无 | 原生程序或自定义容器部署可从该文件读取初始密码；设置后优先于 `ADMIN_PASSWORD` |
+| `PUBLIC_URL` | 无 | 当数据库服务地址为空时初始化，例如 `https://tv.example.com` |
+| `YTDLP_BIN` | `yt-dlp` | yt-dlp 可执行文件路径 |
+| `JS_RUNTIME` | `node` | yt-dlp 使用的 JavaScript 运行时配置 |
+| `COOKIES_FILE` | 无 | 可选 Netscape 格式 Cookies 文件路径，必须在运行环境内可读 |
+| `CACHE_MB` | `32` | 分片缓存容量，单位 MiB，允许 0–128，0 关闭缓存；不是整个应用的内存限制 |
+| `SECURE_COOKIES` | 根据 HTTPS 自动判断 | 管理 Cookie 的 Secure 标记；HTTPS 部署应启用 |
+| `DOMAIN` | 无 | Caddy Compose 配置所用的域名，不是应用频道设置 |
+| `YTDLP_VERSION` | 见 `.env.example` | Compose 构建参数，锁定 yt-dlp 的 PyPI 版本，不是运行时自动更新开关 |
+
+`.env` 只会向容器传递 Compose 文件明确映射的变量。使用 `COOKIES_FILE`、`ADMIN_PASSWORD_FILE` 等可选配置时，需要在自己的 Compose 覆盖文件中添加对应 `environment` 和只读文件挂载；仅在 `.env` 添加名称并不自动生效。默认 Compose 仍要求提供 `ADMIN_PASSWORD`，文件形式的初始化需要同步调整该环境变量映射。
+
+已有数据库时，重新设置 `ADMIN_PASSWORD` **不会重置密码**。日常修改密码请使用管理页“修改管理密码”；修改后所有管理会话退出登录。重启应用也会清空管理会话，但不会删除配置和播放令牌。
+
+已有服务访问地址时，修改 `.env` 中的 `PUBLIC_URL` 不覆盖数据库设置。更换域名后，在管理页更新服务访问地址，再重新复制订阅。如果由 HTTP 改为 HTTPS，同时核对 Secure Cookie 配置并重启应用。
+
+代理填写示例：
+
+```text
+direct
+http://127.0.0.1:7890
+http://username:password@proxy.example.com:8080
+socks5://proxy.example.com:1080
+```
+
+单个频道还允许 `inherit`，表示继承全局代理。容器中的 `127.0.0.1` 指容器自身，不能直接用它访问宿主机上的代理。密码中的 `@`、`:` 等特殊字符应使用 URL 百分号编码。代理地址不允许附带路径、查询或片段。
+
+## 资源与流量
+
+应用不解码和重新编码视频，正常转发主要消耗网络带宽。1 核 1 GB 是本项目的设计目标，不是所有 YouTube 来源都能稳定运行的承诺；需要在实际服务器上观察首次解析、两路并发和持续播放时的内存峰值。
+
+- 一次只运行一个解析任务，避免两个设备同时打开频道时启动多个 Python/JavaScript 解析进程。
+- 默认 32 MiB 分片缓存不代表总内存只有 32 MiB。Go、SQLite、网络缓冲、进行中的请求及 yt-dlp/JavaScript 子进程都额外占用内存。
+- 相同频道可共享解析结果及短期缓存。不同频道、不同画质分别取流；超过缓存大小的分片不会被无限留在内存。
+- 无人观看时不主动下载视频。播放器可能预取若干分片，因此关闭界面与最后一个网络请求之间可能有短暂间隔。
+- 720p 是清晰度上限，不是固定码率。若没有符合上限的可用格式，服务不会自动转码或偷偷选择更高分辨率。
+
+默认 Compose 将应用容器内存限制为 640 MiB、CPU 限制为 1 核，可选 Caddy 内存限制为 96 MiB。镜像将 Go 的软内存目标设为 192 MiB；它不约束外部 Python/Node 进程，也不是整个容器的硬内存上限。给宿主机保留的余量仍需结合其他服务评估。
+
+按每台设备平均 5 Mbps 估算，一个观看小时约产生 **2.25 GB** 服务器视频出站流量。一台设备每天 4 小时、30 天约 270 GB；两台设备各观看相同时长约 540 GB，另留协议和重试余量。两台同看一个频道时，发给各自设备的出站流量仍分别计算。
+
+30 Mbps 是线路标称带宽，两台 5 Mbps 播放平均约占 10 Mbps，但 HLS 分片下载具有突发性，还应为服务器其他业务留余量。服务器到家庭网络的线路质量，也会影响卡顿情况。
+
+应用按 **UTC 自然月**统计中继发送的媒体/清单数据，约每 15 秒汇总写入 SQLite，正常退出时尽量冲刷。突然断电或强制杀死进程可能丢失最后尚未写入的小段统计。直连视频经过客户端与 YouTube，不计入本服务的中继流量。
+
+默认预算为 **800 GB**，仅用于提示，不会达到预算后强制断流。应用数据不包含所有 TLS、TCP、重传及其他服务流量，也不等于服务商的进出站计费口径。1 TB 套餐是否双向计费，应以服务商规则为准。
+
+## 备份、更新与回退
+
+管理页“导出配置”生成 JSON，包含频道、排序和设置。备份**包含播放令牌与代理凭据**，按敏感文件保存；不包含管理员密码哈希、历史流量或 YouTube Cookies 文件。导入会事务替换当前频道和设置；验证失败不做部分更新，管理员密码和历史流量保留。
+
+导入会保留备份中的频道 ID 和播放令牌。如果导入另一个环境的备份，需要核对服务访问地址；该备份中的播放令牌也会成为当前有效令牌。
+
+完整恢复还应备份持久化数据目录/卷和自行挂载的文件。SQLite 使用 WAL，**不要在应用运行时仅复制主 `.db` 文件并忽略 WAL**。简单做法是停止应用后完整备份数据目录，再启动应用。删除 Docker 容器不等于删除数据，但 `docker compose down -v` 会删除 Compose 管理的数据卷，应避免将它用于普通更新。
+
+解析器版本在镜像构建时锁定，运行中不自动执行 `yt-dlp -U` 或下载更新脚本。YouTube 规则变化时，先记录当前镜像版本并备份，再修改 Dockerfile/构建参数中的 yt-dlp 版本，重建镜像并测试两个频道。不要只升级运行中容器里的工具，否则无法可靠复现和回退。
+
+普通重建更新：
+
+```bash
+docker compose build --pull app
+docker compose up -d app
+```
+
+使用 Caddy 覆盖文件的部署，给上述命令同样加上 `-f compose.yml -f compose.caddy.yml`。更新前保留旧镜像或版本标签。回退使用旧镜像和兼容的数据备份；未来若数据库结构升级，旧程序可能拒绝打开新结构，不能假设任意版本都能直接共用数据库。
+
+## 本地开发与检查
+
+需要 Go 1.24 或更高版本、Python、支持 JavaScript 的 yt-dlp 安装及 Node.js。项目 CI 和 Docker 构建使用明确的工具版本；本地开发建议与 Dockerfile 保持一致。SQLite 使用纯 Go 驱动，普通编译不需要系统 SQLite 或 C 编译器，竞态检查需要 Go 支持的 cgo/C 工具链。
+
+首次本地运行可在终端临时设置密码，避免写入命令历史：
+
+```bash
+read -r -s -p '初始管理密码: ' ADMIN_PASSWORD
+export ADMIN_PASSWORD
+export PUBLIC_URL=http://127.0.0.1:9000
+go run ./cmd/youtube-tv
+```
+
+打开 `http://127.0.0.1:9000`。此处 HTTP 仅用于本机开发，不适用于经公网传送密码和播放令牌。
+
+运行检查：
+
+```bash
+GOMAXPROCS=2 go test -p=1 ./...
+GOMAXPROCS=2 go vet -p=1 ./...
+GOMAXPROCS=2 go test -race -p=1 ./...
+docker build -t youtube-tv:local .
+```
+
+自动测试使用本地伪造来源与 HTTP 服务验证行为，不依赖实际 YouTube 网络，也不证明具体直播在目标服务器可用。上线前用 VLC 分别验证两个频道的中继模式，再验证可选直连；检查两台设备同频道、不同频道的资源占用，以及重开频道、来源过期和短暂断网后的表现。
+
+主要目录：
+
+```text
+cmd/youtube-tv/      进程入口、环境变量和服务生命周期
+internal/core/      频道和设置的数据结构
+internal/store/     SQLite、配置验证、备份与流量持久化
+internal/resolver/  yt-dlp、解析合并、缓存和频道状态
+internal/media/     M3U、HLS 改写、媒体代理和有限缓存
+internal/web/       管理 API 和嵌入式中文网页
+```
+
+## 常见问题
+
+| 现象 | 检查方法 |
+|---|---|
+| 登录成功但订阅提示未设置服务地址 | 在服务设置中填写客户端实际能访问的域名 origin；首次未配置 `PUBLIC_URL` 时不会猜测公网域名 |
+| 显示未开播 | 确认链接仍是正在直播的视频，不能用预约、回放或已结束直播代替 |
+| 提示没有符合条件的 HLS | 查看该频道在目标服务器的可用格式；尝试提高画质上限，但不会通过转码补齐来源 |
+| YouTube 要求登录或机器人验证 | 核对服务器出口、yt-dlp 和 JavaScript 运行时版本；确有需要时配置自己的 Cookies 文件，并单独验证该出口可用性 |
+| 中继正常，直连失败 | 客户端可能无法访问 YouTube，或来源绑定服务器出口；改用中继订阅 |
+| 浏览器能登录，但 VLC 播放失败 | 核对域名证书、播放令牌、来源状态；在 VLC 日志区分清单请求失败和媒体请求失败 |
+| HTTP 开发环境登录后立刻失效 | 核对是否误启用了 Secure Cookie；仅本机 HTTP 测试时关闭，正式 HTTPS 环境保持启用 |
+| 换域名后订阅仍指向旧地址 | 修改数据库中的服务访问地址；已有设置不会被 `PUBLIC_URL` 自动覆盖 |
+| 改了 `.env` 的密码仍无法登录 | 环境变量只初始化新数据库；已有实例通过管理页修改密码 |
+| 持续卡顿或内存升高 | 先降低画质、仅播放一路，并用 `docker stats --no-stream` 查看应用及宿主机资源；检查线路和流量额度 |
+
+查看应用日志和依赖版本：
+
+```bash
+docker compose logs --tail=100 app
+docker compose exec app yt-dlp --version
+docker compose exec app node --version
+```
+
+Cookies 文件不通过网页上传，也不在备份 JSON 中携带；如果使用，需要自行以只读方式挂载，并确保容器运行用户具有读取权限。每次解析会创建权限为 0600 的临时副本，允许 yt-dlp 更新自己的 cookie jar，执行结束后删除，原文件保持不变；文件上限为 1 MiB。它只能解决部分需要登录的情形，不能保证解决 YouTube 对出口或请求方式的限制。

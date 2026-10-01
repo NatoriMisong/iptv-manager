@@ -1,0 +1,12 @@
+/data/
+/.env
+/youtube-tv
+/dist/
+*.db
+*.db-wal
+*.db-shm
+coverage.out
+/.agents/
+/.codex/
+cookies*.txt
+/youtube-tv-????-??-??.json
