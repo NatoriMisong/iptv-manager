@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,6 +40,7 @@ type Options struct {
 	CookiesFile string
 	JSRuntime   string
 	Timeout     time.Duration
+	Logger      *slog.Logger
 }
 
 type cacheKey struct {
@@ -66,6 +68,7 @@ type commandRunner func(context.Context, string, []string) ([]byte, []byte, erro
 
 type Resolver struct {
 	opts       Options
+	logger     *slog.Logger
 	mu         sync.Mutex
 	cache      map[cacheKey]cacheEntry
 	inflight   map[cacheKey]*flight
@@ -85,8 +88,11 @@ func New(opts Options) *Resolver {
 	if opts.Timeout <= 0 {
 		opts.Timeout = 45 * time.Second
 	}
+	if opts.Logger == nil {
+		opts.Logger = slog.Default()
+	}
 	return &Resolver{
-		opts: opts, cache: make(map[cacheKey]cacheEntry),
+		opts: opts, logger: opts.Logger.With("component", "resolver"), cache: make(map[cacheKey]cacheEntry),
 		inflight: make(map[cacheKey]*flight), generation: make(map[string]uint64),
 		latest: make(map[string]cacheKey), statuses: make(map[string]core.ChannelStatus),
 		process: make(chan struct{}, 1), queue: make(chan struct{}, 8),
@@ -101,10 +107,12 @@ func (r *Resolver) Resolve(ctx context.Context, ch core.Channel, settings core.S
 		return Result{}, err
 	}
 	if !validSource(ch.URL) {
+		r.logger.Warn("直播来源解析未启动", "channel", ch.ID, "reason", "invalid_source")
 		return Result{}, errors.New("频道来源必须是有效的 YouTube HTTPS 地址")
 	}
 	proxy, err := effectiveProxy(ch, settings)
 	if err != nil {
+		r.logger.Warn("直播来源解析未启动", "channel", ch.ID, "reason", "invalid_proxy")
 		return Result{}, err
 	}
 	quality := ch.Quality
@@ -122,6 +130,7 @@ func (r *Resolver) Resolve(ctx context.Context, ch core.Channel, settings core.S
 		if r.now().Before(cached.until) {
 			r.setStatusLocked(k, cached.result, cached.err)
 			r.mu.Unlock()
+			r.logFor(k).Debug("命中直播来源缓存", "success", cached.err == nil, "cache_until", cached.until)
 			return cloneResult(cached.result), cached.err
 		}
 		delete(r.cache, k)
@@ -135,6 +144,7 @@ func (r *Resolver) Resolve(ctx context.Context, ch core.Channel, settings core.S
 		default:
 			r.setStatusLocked(k, Result{}, ErrBusy)
 			r.mu.Unlock()
+			r.logFor(k).Warn("直播来源解析未启动", "reason", "queue_full")
 			return Result{}, ErrBusy
 		}
 		flightCtx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
@@ -172,6 +182,9 @@ func (r *Resolver) releaseWaiter(k cacheKey, f *flight) {
 
 func (r *Resolver) resolveFlight(k cacheKey, f *flight) {
 	defer func() { <-r.queue; f.cancel() }()
+	started := time.Now()
+	logger := r.logFor(k)
+	logger.Info("直播来源解析开始", "quality_limit", k.quality, "proxy_mode", proxyMode(k.proxy), "cookies_enabled", r.opts.CookiesFile != "")
 	var result Result
 	var err error
 	select {
@@ -179,6 +192,7 @@ func (r *Resolver) resolveFlight(k cacheKey, f *flight) {
 		if f.ctx.Err() != nil {
 			err = f.ctx.Err()
 		} else {
+			logger.Debug("yt-dlp 开始执行", "queue_ms", time.Since(started).Milliseconds())
 			result, err = r.extract(f.ctx, k)
 		}
 		<-r.process
@@ -187,6 +201,15 @@ func (r *Resolver) resolveFlight(k cacheKey, f *flight) {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		err = errors.New("直播来源解析超时，请稍后重试")
+	}
+	switch {
+	case err == nil:
+		upstream, _ := url.Parse(result.URL)
+		logger.Info("直播来源解析成功", "duration_ms", time.Since(started).Milliseconds(), "height", result.Height, "source_host", upstream.Hostname(), "expires_at", result.ExpiresAt)
+	case errors.Is(err, context.Canceled):
+		logger.Info("直播来源解析取消", "duration_ms", time.Since(started).Milliseconds(), "reason", "所有等待请求已取消或频道配置已更新")
+	default:
+		logger.Warn("直播来源解析失败", "duration_ms", time.Since(started).Milliseconds(), "error", err.Error())
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -220,6 +243,7 @@ func (r *Resolver) resolveFlight(k cacheKey, f *flight) {
 
 // Invalidate also cancels old work so it cannot restore a stale cache entry.
 func (r *Resolver) Invalidate(id string) {
+	r.logger.Info("直播来源缓存已清除", "channel", id, "next_action", "下次播放请求将重新解析")
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.generation[id]++
@@ -263,6 +287,8 @@ func (r *Resolver) setStatusLocked(k cacheKey, result Result, err error) {
 }
 
 func (r *Resolver) extract(ctx context.Context, k cacheKey) (Result, error) {
+	logger := r.logFor(k)
+	sensitive := diagnosticSecrets(k.proxy, r.opts.CookiesFile)
 	args := []string{"--ignore-config", "--no-playlist", "--skip-download", "--dump-single-json", "--no-progress", "--no-cache-dir", "--socket-timeout", "15", "--retries", "1", "--extractor-retries", "1", "--proxy", k.proxy}
 	if r.opts.CookiesFile != "" {
 		cookies, err := copyCookiesFile(r.opts.CookiesFile)
@@ -270,6 +296,7 @@ func (r *Resolver) extract(ctx context.Context, k cacheKey) (Result, error) {
 			return Result{}, err
 		}
 		defer os.Remove(cookies)
+		sensitive = append(sensitive, cookies)
 		args = append(args, "--cookies", cookies)
 	}
 	if r.opts.JSRuntime != "" {
@@ -277,10 +304,14 @@ func (r *Resolver) extract(ctx context.Context, k cacheKey) (Result, error) {
 	}
 	args = append(args, "--", k.source)
 	stdout, stderr, err := r.run(ctx, r.opts.Command, args)
+	if diagnostic := sanitizeDiagnostic(string(stderr), sensitive...); diagnostic != "" {
+		logger.Warn("yt-dlp 诊断输出", "failed", err != nil, "detail", diagnostic)
+	}
 	if ctx.Err() != nil {
 		return Result{}, ctx.Err()
 	}
 	if err != nil {
+		logger.Warn("yt-dlp 执行失败", "reason", commandErrorKind(err), "exit_code", commandExitCode(err))
 		// Do not return raw process errors or output: they may contain cookies,
 		// proxy credentials, or temporary signed URLs.
 		message := strings.ToLower(string(stderr))
@@ -295,7 +326,11 @@ func (r *Resolver) extract(ctx context.Context, k cacheKey) (Result, error) {
 			return Result{}, errors.New("yt-dlp 解析失败，请检查来源、网络或解析器版本")
 		}
 	}
-	return parseResult(stdout, k.quality, r.now())
+	result, err := parseResult(stdout, k.quality, r.now())
+	if errors.Is(err, ErrNoHLS) {
+		logFormatDiagnostics(logger, stdout, k.quality)
+	}
+	return result, err
 }
 
 // yt-dlp updates its cookie jar on exit. Work from a private disposable copy,
@@ -332,6 +367,7 @@ func copyCookiesFile(path string) (string, error) {
 }
 
 type format struct {
+	ID          string            `json:"format_id"`
 	URL         string            `json:"url"`
 	Protocol    string            `json:"protocol"`
 	VCodec      string            `json:"vcodec"`

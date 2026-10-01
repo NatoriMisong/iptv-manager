@@ -10,3 +10,4 @@ coverage.out
 /.codex/
 cookies*.txt
 /youtube-tv-????-??-??.json
+/local-test/

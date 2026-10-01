@@ -6,3 +6,4 @@ data
 dist
 youtube-tv
 *.db*
+local-test

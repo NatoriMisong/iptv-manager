@@ -63,6 +63,11 @@ func main() {
 }
 
 func run() error {
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(env("LOG_LEVEL", "info"))); err != nil {
+		return errors.New("LOG_LEVEL 必须为 debug、info、warn 或 error")
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 	db, err := store.Open(filepath.Join(env("DATA_DIR", "./data"), "youtube-tv.db"))
 	if err != nil {
 		return fmt.Errorf("打开 SQLite: %w", err)

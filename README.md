@@ -148,6 +148,7 @@ http://tv.example.com:9000/playlist.m3u?mode=direct&token=你的播放令牌
 | `JS_RUNTIME` | `node` | yt-dlp 使用的 JavaScript 运行时配置 |
 | `COOKIES_FILE` | 无 | 可选 Netscape 格式 Cookies 文件路径，必须在运行环境内可读 |
 | `CACHE_MB` | `32` | 分片缓存容量，单位 MiB，允许 0–128，0 关闭缓存；不是整个应用的内存限制 |
+| `LOG_LEVEL` | `info` | 日志级别：`debug`、`info`、`warn`、`error`；`info` 包含解析开始、成功和失败，`debug` 额外记录缓存命中与排队耗时 |
 | `SECURE_COOKIES` | 根据 HTTPS 自动判断 | 管理 Cookie 的 Secure 标记；HTTPS 部署应启用 |
 | `HTTP_BIND` | `0.0.0.0` | Compose 发布端口的宿主机绑定地址；同机 Nginx 反代可改为 `127.0.0.1` |
 | `HTTP_PORT` | `9000` | Compose 发布的宿主机 HTTP 端口，容器内仍为 9000 |
@@ -268,5 +269,37 @@ docker compose logs --tail=100 app
 docker compose exec app yt-dlp --version
 docker compose exec app node --version
 ```
+
+### 解析日志与格式筛选诊断
+
+复现问题时先跟踪日志，再在 VLC 中打开一个频道：
+
+```bash
+docker compose logs -f --tail=100 app
+```
+
+默认 `LOG_LEVEL=info` 会记录：
+
+- `直播来源解析开始`：频道 ID、YouTube 视频 ID、画质上限、代理类型及是否启用 Cookies。
+- `直播来源解析成功`：总耗时（含排队）、选中分辨率、来源域名和过期时间。这里只表示取得了来源，媒体下载是否正常需继续看播放结果。
+- `直播来源解析失败`：明确的失败原因，例如额外验证、未直播、超时或没有匹配的 HLS。yt-dlp 有诊断输出时，同时记录脱敏后的错误/警告；进程异常退出时记录退出码，无法取得退出码时为 `-1`。
+- `HLS 格式筛选结果`：返回的格式总数、HLS 数量及各排除原因的数量，随后列出最多 20 个 HLS 格式的分辨率和编码信息；没有 HLS 时列出最多 20 个其他格式。
+
+格式排除原因对应如下，多个条件不满足时按现有筛选顺序记录首个原因：
+
+| 日志中的 `reason` | 含义 |
+|---|---|
+| `not_hls` | 格式协议不是 HLS |
+| `invalid_media_url` | 媒体地址不符合允许的来源规则 |
+| `missing_video_codec` | 未明确提供视频编码，或格式不含视频 |
+| `missing_audio_codec` | 未明确提供音频编码，或格式不含音频 |
+| `unknown_height` | 未提供有效的视频高度 |
+| `above_quality_limit` | 视频高度超过当前画质上限 |
+
+例如，`hls_total=0` 表示此次返回的格式列表中没有 HLS；`above_quality_limit` 表示已有 HLS 被画质上限排除。日志只描述当前筛选结果，不会自动提高画质、合并音视频或转码。
+
+需要查看缓存是否命中时，在 `.env` 中设置 `LOG_LEVEL=debug`，然后执行 `docker compose up -d app` 重新创建应用容器。默认级别不会为每次缓存命中重复打印解析日志。导入 M3U 不触发解析，管理页“刷新”仅清除缓存，随后需要重新打开频道才能看到新的解析过程。
+
+日志不输出完整原始 M3U8、原始 JSON、Cookies 或代理凭据；yt-dlp 的 URL、认证头及敏感参数会脱敏，单次诊断输出限制为 8192 个字符。日志输出到标准错误，由 Docker 收集并按现有 Compose 配置轮转。
 
 Cookies 文件不通过网页上传，也不在备份 JSON 中携带；如果使用，需要自行以只读方式挂载，并确保容器运行用户具有读取权限。每次解析会创建权限为 0600 的临时副本，允许 yt-dlp 更新自己的 cookie jar，执行结束后删除，原文件保持不变；文件上限为 1 MiB。它只能解决部分需要登录的情形，不能保证解决 YouTube 对出口或请求方式的限制。

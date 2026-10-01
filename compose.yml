@@ -13,6 +13,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
       CACHE_MB: ${CACHE_MB:-32}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       SECURE_COOKIES: auto
     volumes:
       - app-data:/data
