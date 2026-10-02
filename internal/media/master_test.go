@@ -26,9 +26,9 @@ func splitMaster(prefix string, reversed bool) string {
 
 func TestSelectMasterKeepsOnlySelectedVideoAndAssociatedAudio(t *testing.T) {
 	base, _ := url.Parse("https://manifest.googlevideo.com/live/master.m3u8")
-	body, tracks, err := selectMasterVariant([]byte(splitMaster("", true)), base, "https://manifest.googlevideo.com/live/video720.m3u8", 720)
-	if err != nil || tracks != 1 {
-		t.Fatalf("master selection: %d %v", tracks, err)
+	body, info, err := selectMasterVariant([]byte(splitMaster("", true)), base, "https://manifest.googlevideo.com/live/video720.m3u8", 720, resolver.VideoFormat{})
+	if err != nil || info.AudioTracks != 1 {
+		t.Fatalf("master selection: %+v %v", info, err)
 	}
 	text := string(body)
 	for _, required := range []string{"#EXTM3U", "#EXT-X-VERSION:6", "#EXT-X-INDEPENDENT-SEGMENTS", `GROUP-ID="high"`, `AUDIO="high"`, "video720.m3u8", `URI="audio.m3u8"`} {
@@ -56,7 +56,7 @@ func TestSelectMasterRejectsUnverifiedAudioOrQuality(t *testing.T) {
 		"ambiguous-video": original + "#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720,AUDIO=\"low\"\nvideo720.m3u8\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := selectMasterVariant([]byte(body), base, "https://manifest.googlevideo.com/video720.m3u8", 720); err == nil {
+			if _, _, err := selectMasterVariant([]byte(body), base, "https://manifest.googlevideo.com/video720.m3u8", 720, resolver.VideoFormat{}); err == nil {
 				t.Fatal("unverified split source accepted")
 			}
 		})
@@ -158,6 +158,9 @@ func TestSplitMasterRejectsForeignAudioInBothModes(t *testing.T) {
 		if resp.StatusCode != 502 || strings.Contains(body, "foreign.invalid") || srv.Statuses()["stable-one"].State != "error" {
 			t.Fatalf("untrusted audio was not rejected: %d %s", resp.StatusCode, body)
 		}
+	}
+	if res.invalidations != 0 {
+		t.Fatal("invalid audio host must not trigger source refresh")
 	}
 }
 

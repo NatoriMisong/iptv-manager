@@ -59,25 +59,27 @@ type resource struct {
 	RootURL     string
 	RootExpires time.Time
 	VideoURL    string
+	VideoFormat resolver.VideoFormat
 	Height      int
 	Direct      bool
 	Stream      bool
 	StreamRoot  bool
 }
 type Server struct {
-	repo      Repository
-	resolver  Resolver
-	options   Options
-	cache     *segmentCache
-	mu        sync.Mutex
-	resources map[string]resource
-	failures  map[string]core.ChannelStatus
-	clients   map[string]*http.Client
-	flights   map[string]chan struct{}
-	fetches   chan struct{}
-	refreshes chan struct{}
-	trafficMu sync.Mutex
-	pending   map[string]int64
+	repo               Repository
+	resolver           Resolver
+	options            Options
+	cache              *segmentCache
+	mu                 sync.Mutex
+	resources          map[string]resource
+	failures           map[string]core.ChannelStatus
+	clients            map[string]*http.Client
+	flights            map[string]chan struct{}
+	fetches            chan struct{}
+	refreshes          chan struct{}
+	selectionRefreshes map[string]time.Time
+	trafficMu          sync.Mutex
+	pending            map[string]int64
 }
 
 func New(repo Repository, res Resolver, opts Options) *Server {
@@ -99,7 +101,7 @@ func New(repo Repository, res Resolver, opts Options) *Server {
 	if opts.ValidateStreamURL == nil {
 		opts.ValidateStreamURL = source.ValidateURL
 	}
-	return &Server{repo: repo, resolver: res, options: opts, cache: newSegmentCache(opts.CacheBytes), resources: make(map[string]resource), failures: make(map[string]core.ChannelStatus), clients: make(map[string]*http.Client), flights: make(map[string]chan struct{}), fetches: make(chan struct{}, opts.MaxFetches), refreshes: make(chan struct{}, 1), pending: make(map[string]int64)}
+	return &Server{repo: repo, resolver: res, options: opts, cache: newSegmentCache(opts.CacheBytes), resources: make(map[string]resource), failures: make(map[string]core.ChannelStatus), clients: make(map[string]*http.Client), flights: make(map[string]chan struct{}), fetches: make(chan struct{}, opts.MaxFetches), refreshes: make(chan struct{}, 1), selectionRefreshes: make(map[string]time.Time), pending: make(map[string]int64)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -218,15 +220,18 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, "请先设置服务访问地址")
 		return
 	}
-	ref := resource{URL: res.URL, Channel: ch.ID, Fingerprint: fingerprint(ch, settings), Proxy: core.EffectiveProxy(ch, settings), Headers: res.Headers, Playlist: !ch.IsStream(), Refreshable: !ch.IsStream(), RootURL: res.URL, RootExpires: res.ExpiresAt, VideoURL: res.VideoURL, Height: res.Height, Direct: mode == "direct", Stream: ch.IsStream(), StreamRoot: ch.IsStream()}
+	ref := resource{URL: res.URL, Channel: ch.ID, Fingerprint: fingerprint(ch, settings), Proxy: core.EffectiveProxy(ch, settings), Headers: res.Headers, Playlist: !ch.IsStream(), Refreshable: !ch.IsStream(), RootURL: res.URL, RootExpires: res.ExpiresAt, VideoURL: res.VideoURL, VideoFormat: res.VideoFormat, Height: res.Height, Direct: mode == "direct", Stream: ch.IsStream(), StreamRoot: ch.IsStream()}
 	for attempt := 0; attempt < 2; attempt++ {
 		status, err := s.serve(w, r, ref, settings, !ch.IsStream())
 		if err == nil {
 			return
 		}
-		if !ch.IsStream() && attempt == 0 && expiredStatus(status) {
-			ref, err = s.refreshPlaylist(r.Context(), ch, settings, ref, true)
+		if !ch.IsStream() && attempt == 0 && (expiredStatus(status) || errors.Is(err, errMasterSelection)) {
+			ref, err = s.refreshPlaylist(r.Context(), ch, settings, ref, failureRefreshReason(err))
 			if err != nil {
+				if errors.Is(err, errSelectionCooldown) {
+					w.Header().Set("Retry-After", "30")
+				}
 				fail(w, 503, err.Error())
 				return
 			}
@@ -240,7 +245,7 @@ func (s *Server) reference(ref resource, settings core.Settings) (string, error)
 	if err := s.validate(ref.URL, ref.Stream); err != nil {
 		return "", err
 	}
-	b, _ := json.Marshal([]any{ref.URL, ref.Channel, ref.Fingerprint, ref.Headers, ref.Path, ref.VideoURL, ref.Height})
+	b, _ := json.Marshal([]any{ref.URL, ref.Channel, ref.Fingerprint, ref.Headers, ref.Path, ref.VideoURL, ref.VideoFormat, ref.Height})
 	sum := sha256.Sum256(b)
 	id := hex.EncodeToString(sum[:20])
 	ref.Expires = time.Now().Add(2 * time.Hour)
@@ -287,7 +292,7 @@ func (s *Server) media(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ref.Playlist && ref.Refreshable && !ref.RootExpires.IsZero() && !time.Now().Before(ref.RootExpires.Add(-time.Minute)) {
-		ref, err = s.refreshPlaylist(r.Context(), ch, settings, ref, false)
+		ref, err = s.refreshPlaylist(r.Context(), ch, settings, ref, refreshExpiry)
 		if err != nil {
 			fail(w, 502, "直播清单刷新失败，请稍后重试")
 			return
@@ -295,8 +300,8 @@ func (s *Server) media(w http.ResponseWriter, r *http.Request) {
 		s.saveReference(r.PathValue("id"), ref)
 	}
 	status, err := s.serve(w, r, ref, settings, false)
-	if err != nil && expiredStatus(status) && ref.Playlist && ref.Refreshable {
-		ref, err = s.refreshPlaylist(r.Context(), ch, settings, ref, true)
+	if err != nil && (expiredStatus(status) || errors.Is(err, errMasterSelection)) && ref.Playlist && ref.Refreshable {
+		ref, err = s.refreshPlaylist(r.Context(), ch, settings, ref, failureRefreshReason(err))
 		if err == nil {
 			s.saveReference(r.PathValue("id"), ref)
 			status, err = s.serve(w, r, ref, settings, false)
@@ -306,7 +311,10 @@ func (s *Server) media(w http.ResponseWriter, r *http.Request) {
 		if expiredStatus(status) && !ref.Playlist && !ref.Stream {
 			s.resolver.Invalidate(ch.ID)
 		}
-		if status == 503 {
+		if errors.Is(err, errSelectionCooldown) {
+			status = 503
+			w.Header().Set("Retry-After", "30")
+		} else if status == 503 {
 			w.Header().Set("Retry-After", "2")
 		} else if status != 416 {
 			status = 502
@@ -538,6 +546,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, ref resource, set
 		}
 		if ref.Stream {
 			s.reportState(ref.Channel, "ready", "直播清单可用，实际播放由播放器确认")
+		} else {
+			s.clearFailure(ref.Channel)
 		}
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")

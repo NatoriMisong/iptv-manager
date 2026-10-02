@@ -31,11 +31,21 @@ type Result struct {
 	URL string
 	// VideoURL selects a video rendition in URL's master playlist. The media
 	// layer must verify its AUDIO group before serving either playback mode.
-	VideoURL  string
-	Headers   map[string]string
-	Title     string
-	Height    int
-	ExpiresAt time.Time
+	VideoURL    string
+	VideoFormat VideoFormat
+	Headers     map[string]string
+	Title       string
+	Height      int
+	ExpiresAt   time.Time
+}
+
+// VideoFormat identifies the rendition independently of its temporary URL.
+// The media layer still obtains the audio association from the current master.
+type VideoFormat struct {
+	ID    string
+	Codec string
+	Width int
+	FPS   float64
 }
 
 type Options struct {
@@ -208,7 +218,7 @@ func (r *Resolver) resolveFlight(k cacheKey, f *flight) {
 	switch {
 	case err == nil:
 		upstream, _ := url.Parse(result.URL)
-		logger.Info("直播来源解析成功", "duration_ms", time.Since(started).Milliseconds(), "height", result.Height, "source_host", upstream.Hostname(), "expires_at", result.ExpiresAt, "verify_audio_group", result.VideoURL != "")
+		logger.Info("直播来源解析成功", "duration_ms", time.Since(started).Milliseconds(), "height", result.Height, "source_host", upstream.Hostname(), "expires_at", result.ExpiresAt, "verify_audio_group", result.VideoURL != "", "format_id", diagnosticLabel(result.VideoFormat.ID), "video_codec", diagnosticLabel(result.VideoFormat.Codec))
 	case errors.Is(err, context.Canceled):
 		logger.Info("直播来源解析取消", "duration_ms", time.Since(started).Milliseconds(), "reason", "所有等待请求已取消或频道配置已更新")
 	default:
@@ -377,6 +387,8 @@ type format struct {
 	VCodec      string            `json:"vcodec"`
 	ACodec      string            `json:"acodec"`
 	Height      int               `json:"height"`
+	Width       int               `json:"width"`
+	FPS         float64           `json:"fps"`
 	TBR         float64           `json:"tbr"`
 	HTTPHeaders map[string]string `json:"http_headers"`
 }
@@ -440,7 +452,7 @@ func parseResult(data []byte, quality int, now time.Time) (Result, error) {
 		if !expires.After(now) {
 			return Result{}, errors.New("解析器返回的直播来源已经过期")
 		}
-		return Result{URL: best.ManifestURL, VideoURL: best.URL, Headers: safeHeaders(info.HTTPHeaders, best.HTTPHeaders), Title: info.Title, Height: best.Height, ExpiresAt: expires}, nil
+		return Result{URL: best.ManifestURL, VideoURL: best.URL, VideoFormat: VideoFormat{ID: best.ID, Codec: best.VCodec, Width: best.Width, FPS: best.FPS}, Headers: safeHeaders(info.HTTPHeaders, best.HTTPHeaders), Title: info.Title, Height: best.Height, ExpiresAt: expires}, nil
 	}
 	expires := sourceExpiry(best.URL, now)
 	if !expires.After(now) {

@@ -17,7 +17,7 @@ func splitLiveData(master string) []byte {
 		{"format_id": "234", "url": "https://manifest.googlevideo.com/audio-high.m3u8", "manifest_url": master, "protocol": "m3u8_native", "vcodec": "none", "height": 0},
 	}
 	for i, height := range []int{144, 240, 360, 480, 720, 1080} {
-		formats = append(formats, map[string]any{"format_id": []string{"269", "229", "230", "231", "232", "270"}[i], "url": fmt.Sprintf("https://manifest.googlevideo.com/video-%d.m3u8?expire=1900000600", height), "manifest_url": master, "protocol": "m3u8_native", "vcodec": "avc1.4D401F", "acodec": "none", "height": height})
+		formats = append(formats, map[string]any{"format_id": []string{"269", "229", "230", "231", "232", "270"}[i], "url": fmt.Sprintf("https://manifest.googlevideo.com/video-%d.m3u8?expire=1900000600", height), "manifest_url": master, "protocol": "m3u8_native", "vcodec": "avc1.4D401F", "acodec": "none", "height": height, "width": height * 16 / 9, "fps": 29.97})
 	}
 	data, _ := json.Marshal(map[string]any{"is_live": true, "title": "split live", "formats": formats})
 	return data
@@ -32,6 +32,9 @@ func TestReportedSplitLiveFormatsRespectQualityAndKeepMaster(t *testing.T) {
 		}
 		if result.URL != master || result.Height != quality || !strings.Contains(result.VideoURL, fmt.Sprintf("video-%d.m3u8", quality)) {
 			t.Fatalf("wrong split selection: %+v", result)
+		}
+		if result.VideoFormat.Codec != "avc1.4D401F" || result.VideoFormat.Width != quality*16/9 || result.VideoFormat.FPS != 29.97 || result.VideoFormat.ID == "" {
+			t.Fatalf("selected video metadata lost: %+v", result.VideoFormat)
 		}
 		if result.ExpiresAt.Unix() != 1900000600 {
 			t.Fatal("video expiry not included")

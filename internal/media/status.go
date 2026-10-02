@@ -33,6 +33,7 @@ func (s *Server) Invalidate(id string) {
 	s.resolver.Invalidate(id)
 	s.mu.Lock()
 	delete(s.failures, id)
+	delete(s.selectionRefreshes, id)
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

@@ -4,12 +4,55 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
 
 	"iptv-manager/internal/core"
 )
+
+type refreshReason int
+
+const (
+	refreshExpiry refreshReason = iota
+	refreshUpstream
+	refreshSelection
+)
+
+var errSelectionCooldown = errors.New("HLS 格式匹配仍失败，已重新解析来源，请 30 秒后重试或在管理页手动刷新")
+
+func failureRefreshReason(err error) refreshReason {
+	if errors.Is(err, errMasterSelection) {
+		return refreshSelection
+	}
+	return refreshUpstream
+}
+
+// Called under the refresh gate, with a bounded map also protected from
+// concurrent manual invalidation. Failed player retries must not keep
+// launching yt-dlp on small servers.
+func (s *Server) allowSelectionRefresh(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if now.Before(s.selectionRefreshes[id]) {
+		return false
+	}
+	for key, until := range s.selectionRefreshes {
+		if !now.Before(until) {
+			delete(s.selectionRefreshes, key)
+		}
+	}
+	if len(s.selectionRefreshes) >= 512 {
+		for key := range s.selectionRefreshes {
+			delete(s.selectionRefreshes, key)
+			break
+		}
+	}
+	s.selectionRefreshes[id] = now.Add(30 * time.Second)
+	return true
+}
 
 func expiredStatus(status int) bool {
 	return status == http.StatusUnauthorized || status == http.StatusForbidden || status == http.StatusNotFound || status == http.StatusGone
@@ -30,7 +73,7 @@ func (s *Server) saveReference(id string, ref resource) {
 // It never maps an old media segment to a new segment by position or filename.
 // This preserves an audio rendition or a selected resolution when the provider
 // renews signatures or reorders entries in a master playlist.
-func (s *Server) refreshPlaylist(ctx context.Context, ch core.Channel, settings core.Settings, ref resource, force bool) (resource, error) {
+func (s *Server) refreshPlaylist(ctx context.Context, ch core.Channel, settings core.Settings, ref resource, reason refreshReason) (resource, error) {
 	if !ref.Playlist || !ref.Refreshable || len(ref.Path) > 8 {
 		return ref, errors.New("此资源不能自动刷新")
 	}
@@ -46,7 +89,14 @@ func (s *Server) refreshPlaylist(ctx context.Context, ch core.Channel, settings 
 	}
 	// Recheck after acquiring the gate. A different viewer may have already
 	// refreshed this root; invalidating again would cancel their shared work.
-	if force && resolved.URL == ref.RootURL && resolved.VideoURL == ref.VideoURL {
+	if reason != refreshExpiry && resolved.URL == ref.RootURL && resolved.VideoURL == ref.VideoURL && resolved.VideoFormat == ref.VideoFormat && resolved.Height == ref.Height {
+		if reason == refreshSelection {
+			if !s.allowSelectionRefresh(ch.ID) {
+				slog.Info("HLS 来源刷新暂缓", "channel", ch.ID, "reason", "selection_mismatch_cooldown", "retry_after_seconds", 30)
+				return ref, errSelectionCooldown
+			}
+			slog.Info("HLS 格式匹配失败，重新解析来源", "channel", ch.ID, "reason", "selection_mismatch", "max_retries", 1)
+		}
 		s.resolver.Invalidate(ch.ID)
 		resolved, err = s.resolver.Resolve(ctx, ch, settings)
 		if err != nil {
@@ -62,6 +112,7 @@ func (s *Server) refreshPlaylist(ctx context.Context, ch core.Channel, settings 
 	updated.RootExpires = resolved.ExpiresAt
 	updated.Headers = resolved.Headers
 	updated.VideoURL = resolved.VideoURL
+	updated.VideoFormat = resolved.VideoFormat
 	updated.Height = resolved.Height
 	updated.Proxy = core.EffectiveProxy(ch, settings)
 	for _, selector := range ref.Path {
