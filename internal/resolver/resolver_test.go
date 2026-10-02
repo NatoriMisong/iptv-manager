@@ -81,7 +81,7 @@ func TestRejectOfflineVideoOnlyOverQualityAndForeignMedia(t *testing.T) {
 		{"not-live-status", `{"live_status":"not_live"}`, ErrOffline},
 		{"post-live", `{"live_status":"post_live"}`, ErrOffline},
 		{"upcoming", `{"live_status":"is_upcoming"}`, ErrOffline},
-		{"video-only", `{"is_live":true,"formats":[{"url":"https://manifest.googlevideo.com/live.m3u8","protocol":"m3u8_native","height":720,"vcodec":"avc1","acodec":"none","manifest_url":"https://manifest.googlevideo.com/master.m3u8"}]}`, ErrNoHLS},
+		{"video-only-without-master", `{"is_live":true,"formats":[{"url":"https://manifest.googlevideo.com/live.m3u8","protocol":"m3u8_native","height":720,"vcodec":"avc1","acodec":"none"}]}`, ErrNoHLS},
 		{"too-high", `{"is_live":true,"formats":[{"url":"https://manifest.googlevideo.com/live.m3u8","protocol":"m3u8_native","height":1080,"vcodec":"avc1","acodec":"mp4a"}]}`, ErrNoHLS},
 		{"foreign-media", `{"is_live":true,"formats":[{"url":"http://localhost/live.m3u8","protocol":"m3u8_native","height":720,"vcodec":"avc1","acodec":"mp4a"}]}`, ErrNoHLS},
 	} {

@@ -121,12 +121,12 @@ func rejectionReason(f format, quality int) string {
 		return "invalid_media_url"
 	case !knownCodec(f.VCodec):
 		return "missing_video_codec"
-	case !knownCodec(f.ACodec):
-		return "missing_audio_codec"
 	case f.Height <= 0:
 		return "unknown_height"
 	case f.Height > quality:
 		return "above_quality_limit"
+	case !knownCodec(f.ACodec) && (!validMediaURL(f.ManifestURL) || f.URL == f.ManifestURL):
+		return "missing_audio_master"
 	default:
 		return "eligible"
 	}

@@ -23,12 +23,15 @@ import (
 
 var (
 	ErrOffline = errors.New("频道当前未直播")
-	ErrNoHLS   = errors.New("没有符合清晰度限制且同时包含音视频的 HLS 来源；本服务不自动转码")
+	ErrNoHLS   = errors.New("没有符合清晰度限制的可用 HLS 来源；独立音轨需要有效的 HLS 主清单，请查看格式筛选日志")
 	ErrBusy    = errors.New("解析队列已满，请稍后重试")
 )
 
 type Result struct {
-	URL       string
+	URL string
+	// VideoURL selects a video rendition in URL's master playlist. The media
+	// layer must verify its AUDIO group before serving either playback mode.
+	VideoURL  string
 	Headers   map[string]string
 	Title     string
 	Height    int
@@ -205,7 +208,7 @@ func (r *Resolver) resolveFlight(k cacheKey, f *flight) {
 	switch {
 	case err == nil:
 		upstream, _ := url.Parse(result.URL)
-		logger.Info("直播来源解析成功", "duration_ms", time.Since(started).Milliseconds(), "height", result.Height, "source_host", upstream.Hostname(), "expires_at", result.ExpiresAt)
+		logger.Info("直播来源解析成功", "duration_ms", time.Since(started).Milliseconds(), "height", result.Height, "source_host", upstream.Hostname(), "expires_at", result.ExpiresAt, "verify_audio_group", result.VideoURL != "")
 	case errors.Is(err, context.Canceled):
 		logger.Info("直播来源解析取消", "duration_ms", time.Since(started).Milliseconds(), "reason", "所有等待请求已取消或频道配置已更新")
 	default:
@@ -369,6 +372,7 @@ func copyCookiesFile(path string) (string, error) {
 type format struct {
 	ID          string            `json:"format_id"`
 	URL         string            `json:"url"`
+	ManifestURL string            `json:"manifest_url"`
 	Protocol    string            `json:"protocol"`
 	VCodec      string            `json:"vcodec"`
 	ACodec      string            `json:"acodec"`
@@ -414,13 +418,49 @@ func parseResult(data []byte, quality int, now time.Time) (Result, error) {
 		}
 	}
 	if best == nil {
-		return Result{}, ErrNoHLS
+		// A video-only HLS rendition is usable through its original master,
+		// whose AUDIO association will be verified before exposing the source.
+		// Never infer an audio track from format IDs or combine arbitrary URLs.
+		for i := range formats {
+			f := &formats[i]
+			if (f.Protocol != "m3u8" && f.Protocol != "m3u8_native") || !validMediaURL(f.URL) || !validMediaURL(f.ManifestURL) || f.URL == f.ManifestURL || !knownCodec(f.VCodec) || f.Height <= 0 || f.Height > quality {
+				continue
+			}
+			if best == nil || betterVideoFormat(*f, *best) {
+				best = f
+			}
+		}
+		if best == nil {
+			return Result{}, ErrNoHLS
+		}
+		expires := sourceExpiry(best.ManifestURL, now)
+		if videoExpiry := sourceExpiry(best.URL, now); videoExpiry.Before(expires) {
+			expires = videoExpiry
+		}
+		if !expires.After(now) {
+			return Result{}, errors.New("解析器返回的直播来源已经过期")
+		}
+		return Result{URL: best.ManifestURL, VideoURL: best.URL, Headers: safeHeaders(info.HTTPHeaders, best.HTTPHeaders), Title: info.Title, Height: best.Height, ExpiresAt: expires}, nil
 	}
 	expires := sourceExpiry(best.URL, now)
 	if !expires.After(now) {
 		return Result{}, errors.New("解析器返回的直播来源已经过期")
 	}
 	return Result{URL: best.URL, Headers: safeHeaders(info.HTTPHeaders, best.HTTPHeaders), Title: info.Title, Height: best.Height, ExpiresAt: expires}, nil
+}
+
+func betterVideoFormat(a, b format) bool {
+	h264 := func(codec string) bool {
+		codec = strings.ToLower(codec)
+		return strings.HasPrefix(codec, "avc") || strings.HasPrefix(codec, "h264")
+	}
+	if h264(a.VCodec) != h264(b.VCodec) {
+		return h264(a.VCodec)
+	}
+	if a.Height != b.Height {
+		return a.Height > b.Height
+	}
+	return a.TBR > b.TBR
 }
 
 func betterFormat(a, b format) bool {

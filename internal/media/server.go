@@ -55,6 +55,9 @@ type resource struct {
 	Path        []string
 	RootURL     string
 	RootExpires time.Time
+	VideoURL    string
+	Height      int
+	Direct      bool
 }
 type Server struct {
 	repo      Repository
@@ -189,15 +192,15 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	if mode == "direct" {
+	if mode == "direct" && res.VideoURL == "" {
 		http.Redirect(w, r, res.URL, http.StatusTemporaryRedirect)
 		return
 	}
-	if settings.BaseURL == "" {
+	if mode == "relay" && settings.BaseURL == "" {
 		fail(w, 503, "请先设置服务访问地址")
 		return
 	}
-	ref := resource{URL: res.URL, Channel: ch.ID, Fingerprint: fingerprint(ch, settings), Proxy: core.EffectiveProxy(ch, settings), Headers: res.Headers, Playlist: true, Refreshable: true, RootURL: res.URL, RootExpires: res.ExpiresAt}
+	ref := resource{URL: res.URL, Channel: ch.ID, Fingerprint: fingerprint(ch, settings), Proxy: core.EffectiveProxy(ch, settings), Headers: res.Headers, Playlist: true, Refreshable: true, RootURL: res.URL, RootExpires: res.ExpiresAt, VideoURL: res.VideoURL, Height: res.Height, Direct: mode == "direct"}
 	for attempt := 0; attempt < 2; attempt++ {
 		status, err := s.serve(w, r, ref, settings, true)
 		if err == nil {
@@ -219,7 +222,7 @@ func (s *Server) reference(ref resource, settings core.Settings) (string, error)
 	if err := s.options.ValidateURL(ref.URL); err != nil {
 		return "", err
 	}
-	b, _ := json.Marshal([]any{ref.URL, ref.Channel, ref.Fingerprint, ref.Headers, ref.Path})
+	b, _ := json.Marshal([]any{ref.URL, ref.Channel, ref.Fingerprint, ref.Headers, ref.Path, ref.VideoURL, ref.Height})
 	sum := sha256.Sum256(b)
 	id := hex.EncodeToString(sum[:20])
 	ref.Expires = time.Now().Add(2 * time.Hour)
@@ -441,7 +444,17 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, ref resource, set
 			return 502, errors.New("manifest too large")
 		}
 		base := resp.Request.URL
+		body, err = s.prepareManifest(body, base, ref)
+		if err != nil {
+			return 502, err
+		}
 		body, err = rewriteHLSLinks(body, base, func(link playlistLink) (string, error) {
+			if ref.Direct {
+				if err := s.options.ValidateURL(link.URL); err != nil {
+					return "", err
+				}
+				return link.URL, nil
+			}
 			next := ref
 			next.URL = link.URL
 			next.Playlist = link.Playlist

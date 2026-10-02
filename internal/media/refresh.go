@@ -46,7 +46,7 @@ func (s *Server) refreshPlaylist(ctx context.Context, ch core.Channel, settings 
 	}
 	// Recheck after acquiring the gate. A different viewer may have already
 	// refreshed this root; invalidating again would cancel their shared work.
-	if force && resolved.URL == ref.RootURL {
+	if force && resolved.URL == ref.RootURL && resolved.VideoURL == ref.VideoURL {
 		s.resolver.Invalidate(ch.ID)
 		resolved, err = s.resolver.Resolve(ctx, ch, settings)
 		if err != nil {
@@ -61,6 +61,8 @@ func (s *Server) refreshPlaylist(ctx context.Context, ch core.Channel, settings 
 	updated.RootURL = resolved.URL
 	updated.RootExpires = resolved.ExpiresAt
 	updated.Headers = resolved.Headers
+	updated.VideoURL = resolved.VideoURL
+	updated.Height = resolved.Height
 	updated.Proxy = core.EffectiveProxy(ch, settings)
 	for _, selector := range ref.Path {
 		body, base, err := s.readManifest(ctx, updated)
@@ -98,7 +100,8 @@ func (s *Server) readManifest(ctx context.Context, ref resource) ([]byte, *url.U
 	if len(body) > 2*1024*1024 {
 		return nil, nil, errors.New("HLS 清单过大")
 	}
-	return body, resp.Request.URL, nil
+	body, err = s.prepareManifest(body, resp.Request.URL, ref)
+	return body, resp.Request.URL, err
 }
 
 func findPlaylist(body []byte, base *url.URL, selector string) (string, error) {

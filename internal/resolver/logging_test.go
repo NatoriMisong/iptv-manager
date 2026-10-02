@@ -85,7 +85,7 @@ func TestNoHLSLogsExplainExistingRejections(t *testing.T) {
 				t.Fatalf("incorrect format counts: %v", record)
 			}
 			counts := record["rejections"].(map[string]any)
-			for _, reason := range []string{"above_quality_limit", "missing_audio_codec", "missing_video_codec", "unknown_height", "not_hls", "invalid_media_url"} {
+			for _, reason := range []string{"above_quality_limit", "missing_audio_master", "missing_video_codec", "unknown_height", "not_hls", "invalid_media_url"} {
 				if counts[reason] != float64(1) {
 					t.Fatalf("missing rejection %s: %v", reason, counts)
 				}
