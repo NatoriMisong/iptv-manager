@@ -45,6 +45,7 @@ type Options struct {
 	ValidateURL         func(string) error
 	StreamClientFactory func(string) (*http.Client, error)
 	ValidateStreamURL   func(string) error
+	TVBClientFactory    func(string) (*http.Client, error)
 }
 type resource struct {
 	URL         string
@@ -64,10 +65,12 @@ type resource struct {
 	Direct      bool
 	Stream      bool
 	StreamRoot  bool
+	TVB         *tvbSession
 }
 type Server struct {
 	repo               Repository
 	resolver           Resolver
+	tvb                *tvbResolver
 	options            Options
 	cache              *segmentCache
 	mu                 sync.Mutex
@@ -101,7 +104,10 @@ func New(repo Repository, res Resolver, opts Options) *Server {
 	if opts.ValidateStreamURL == nil {
 		opts.ValidateStreamURL = source.ValidateURL
 	}
-	return &Server{repo: repo, resolver: res, options: opts, cache: newSegmentCache(opts.CacheBytes), resources: make(map[string]resource), failures: make(map[string]core.ChannelStatus), clients: make(map[string]*http.Client), flights: make(map[string]chan struct{}), fetches: make(chan struct{}, opts.MaxFetches), refreshes: make(chan struct{}, 1), selectionRefreshes: make(map[string]time.Time), pending: make(map[string]int64)}
+	if opts.TVBClientFactory == nil {
+		opts.TVBClientFactory = newTVBClient
+	}
+	return &Server{repo: repo, resolver: res, tvb: newTVBResolver(opts.TVBClientFactory), options: opts, cache: newSegmentCache(opts.CacheBytes), resources: make(map[string]resource), failures: make(map[string]core.ChannelStatus), clients: make(map[string]*http.Client), flights: make(map[string]chan struct{}), fetches: make(chan struct{}, opts.MaxFetches), refreshes: make(chan struct{}, 1), selectionRefreshes: make(map[string]time.Time), pending: make(map[string]int64)}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -195,6 +201,10 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "播放模式无效")
 		return
 	}
+	if ch.IsTVB() {
+		s.watchTVB(w, r, ch, settings, mode)
+		return
+	}
 	res := resolver.Result{URL: ch.URL}
 	if !ch.IsStream() {
 		res, err = s.resolver.Resolve(r.Context(), ch, settings)
@@ -242,10 +252,18 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *Server) reference(ref resource, settings core.Settings) (string, error) {
+	if ref.TVB != nil {
+		if !s.tvb.active(ref.TVB) {
+			return "", errTVBRevoked
+		}
+		if err := validateTVBURL(ref.URL); err != nil {
+			return "", err
+		}
+	}
 	if err := s.validate(ref.URL, ref.Stream); err != nil {
 		return "", err
 	}
-	b, _ := json.Marshal([]any{ref.URL, ref.Channel, ref.Fingerprint, ref.Headers, ref.Path, ref.VideoURL, ref.VideoFormat, ref.Height})
+	b, _ := json.Marshal([]any{ref.URL, ref.Channel, ref.Fingerprint, ref.Headers, ref.Path, ref.VideoURL, ref.VideoFormat, ref.Height, tvbSessionID(ref)})
 	sum := sha256.Sum256(b)
 	id := hex.EncodeToString(sum[:20])
 	ref.Expires = time.Now().Add(2 * time.Hour)
@@ -289,6 +307,10 @@ func (s *Server) media(w http.ResponseWriter, r *http.Request) {
 	ch, err := s.repo.Channel(r.Context(), ref.Channel)
 	if err != nil || !ch.Enabled || ch.SourceMissing || ref.Fingerprint != fingerprint(ch, settings) {
 		fail(w, 410, "频道配置已更新，请重新打开频道")
+		return
+	}
+	if ref.TVB != nil {
+		s.serveTVB(w, r, ch, settings, ref, r.PathValue("id"))
 		return
 	}
 	if ref.Playlist && ref.Refreshable && !ref.RootExpires.IsZero() && !time.Now().Before(ref.RootExpires.Add(-time.Minute)) {
@@ -353,6 +375,9 @@ func (s *Server) client(proxy string, stream bool) (*http.Client, error) {
 	return c, nil
 }
 func (s *Server) fetch(ctx context.Context, ref resource, rangeHeader string) (*http.Response, error) {
+	if ref.TVB != nil {
+		return s.fetchTVB(ctx, ref, rangeHeader)
+	}
 	if err := s.validate(ref.URL, ref.Stream); err != nil {
 		return nil, err
 	}
@@ -456,7 +481,10 @@ func segmentHeaders(h http.Header) http.Header {
 	return copy
 }
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, ref resource, settings core.Settings, requireManifest bool) (int, error) {
-	key := ref.Fingerprint + "\x00" + ref.Channel + "\x00" + ref.URL + "\x00" + r.Header.Get("Range")
+	if ref.TVB != nil && !s.tvb.active(ref.TVB) {
+		return 410, errTVBRevoked
+	}
+	key := ref.Fingerprint + "\x00" + ref.Channel + "\x00" + ref.URL + "\x00" + r.Header.Get("Range") + "\x00" + tvbSessionID(ref)
 	if !requireManifest && !ref.Playlist && !ref.StreamRoot {
 		for {
 			if cached, ok := s.cache.get(key); ok {

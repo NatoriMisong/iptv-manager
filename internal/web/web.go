@@ -454,6 +454,10 @@ func (s *server) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.media.Invalidate(id)
+	if ch.IsTVB() {
+		respond(w, 200, map[string]string{"message": "已清除 TVB 播放地址、Cookie 和媒体缓存，下次播放时重新获取"})
+		return
+	}
 	if ch.IsStream() {
 		respond(w, 200, map[string]string{"message": "已清除播放状态，下次播放重新连接来源"})
 		return

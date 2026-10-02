@@ -3,6 +3,7 @@ package media
 import (
 	"container/list"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,6 +15,18 @@ type cachedSegment struct {
 	status  int
 	expires time.Time
 }
+
+func (c *segmentCache) clearChannel(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, entry := range c.items {
+		parts := strings.SplitN(entry.Value.(cachedSegment).key, "\x00", 3)
+		if len(parts) == 3 && parts[1] == id {
+			c.remove(entry)
+		}
+	}
+}
+
 type segmentCache struct {
 	mu        sync.Mutex
 	max, used int64

@@ -153,7 +153,7 @@ func normalizeChannel(ch core.Channel) (core.Channel, error) {
 	if !validQuality(ch.Quality, true) {
 		return ch, invalid("unsupported channel quality")
 	}
-	if ch.IsStream() {
+	if ch.IsStream() || ch.IsTVB() {
 		ch.Quality = 0
 	}
 	if ch.SortOrder < 0 {
@@ -164,6 +164,12 @@ func normalizeChannel(ch core.Channel) (core.Channel, error) {
 }
 
 func channelURL(kind, raw string) (string, error) {
+	if kind == "tvb" {
+		if id := core.TVBChannelID(raw); id != "" {
+			return "https://news.tvb.com/tc/live/" + id, nil
+		}
+		return "", invalid("TVB 来源必须是 https://news.tvb.com/tc/live/C 或 /F")
+	}
 	if kind == "" || kind == "youtube" {
 		return youtubeURL(raw)
 	}

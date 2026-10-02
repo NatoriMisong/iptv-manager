@@ -30,15 +30,27 @@ func (s *Server) Statuses() map[string]core.ChannelStatus {
 }
 
 func (s *Server) Invalidate(id string) {
+	s.tvb.invalidate(id)
 	s.resolver.Invalidate(id)
 	s.mu.Lock()
 	delete(s.failures, id)
 	delete(s.selectionRefreshes, id)
+	for key, ref := range s.resources {
+		if ref.Channel == id && ref.TVB != nil {
+			delete(s.resources, key)
+		}
+	}
 	s.mu.Unlock()
+	s.cache.clearChannel(id)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if ch, err := s.repo.Channel(ctx, id); err == nil && ch.IsStream() {
-		s.reportState(id, "unknown", "等待连接原始直播源")
+	if ch, err := s.repo.Channel(ctx, id); err == nil {
+		if ch.IsStream() {
+			s.reportState(id, "unknown", "等待连接原始直播源")
+		}
+		if ch.IsTVB() {
+			s.reportState(id, "unknown", "TVB 地址和 Cookie 已清除，等待下次播放")
+		}
 	}
 }
 

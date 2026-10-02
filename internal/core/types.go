@@ -7,7 +7,7 @@ type Channel struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
 	URL            string `json:"url"`
-	SourceType     string `json:"source_type"` // youtube (default), stream
+	SourceType     string `json:"source_type"` // youtube (default), stream, tvb
 	SubscriptionID string `json:"subscription_id,omitempty"`
 	SourceKey      string `json:"source_key,omitempty"`
 	SourceMissing  bool   `json:"source_missing,omitempty"`
@@ -45,6 +45,7 @@ type Subscription struct {
 }
 
 func (ch Channel) IsStream() bool { return ch.SourceType == "stream" }
+func (ch Channel) IsTVB() bool    { return ch.SourceType == "tvb" }
 
 type BulkChannelItem struct {
 	Line      int    `json:"line"`

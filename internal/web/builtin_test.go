@@ -11,7 +11,7 @@ import (
 	"iptv-manager/internal/store"
 )
 
-func TestBuiltinSourcesImportThroughStreamAPI(t *testing.T) {
+func TestBuiltinSourcesImportThroughBulkAPI(t *testing.T) {
 	ctx := context.Background()
 	repo, err := store.Open(":memory:")
 	if err != nil {
@@ -37,14 +37,19 @@ func TestBuiltinSourcesImportThroughStreamAPI(t *testing.T) {
 	w := request(handler, "GET", "/api/builtin-sources", "", cookie, "", "")
 	var catalog struct {
 		Sources []struct {
-			ID, Name string
-			Channels []struct{ ID, Name, URL string }
+			ID, Name   string
+			SourceType string `json:"source_type"`
+			Channels   []struct{ ID, Name, URL string }
 		}
 	}
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &catalog) != nil || len(catalog.Sources) == 0 {
 		t.Fatalf("invalid catalog: %d %s", w.Code, w.Body.String())
 	}
 	for _, source := range catalog.Sources {
+		kind := source.SourceType
+		if kind == "" {
+			kind = "stream"
+		}
 		if len(source.Channels) == 0 {
 			t.Fatalf("empty source: %s", source.ID)
 		}
@@ -52,7 +57,7 @@ func TestBuiltinSourcesImportThroughStreamAPI(t *testing.T) {
 		for i, channel := range source.Channels {
 			lines[i] = channel.Name + "," + channel.URL
 		}
-		body, err := json.Marshal(core.BulkChannelRequest{SourceType: "stream", Text: strings.Join(lines, "\n"), Group: source.Name, Mode: "direct"})
+		body, err := json.Marshal(core.BulkChannelRequest{SourceType: kind, Text: strings.Join(lines, "\n"), Group: source.Name, Mode: "direct"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,7 +68,7 @@ func TestBuiltinSourcesImportThroughStreamAPI(t *testing.T) {
 		}
 		for i, item := range result.Results {
 			channel, err := repo.Channel(ctx, item.ChannelID)
-			if err != nil || !channel.IsStream() || channel.Mode != "direct" || channel.Proxy != "inherit" || channel.Group != source.Name || channel.Name != source.Channels[i].Name || channel.URL != source.Channels[i].URL {
+			if err != nil || channel.SourceType != kind || channel.Mode != "direct" || channel.Proxy != "inherit" || channel.Group != source.Name || channel.Name != source.Channels[i].Name || channel.URL != source.Channels[i].URL {
 				t.Fatalf("invalid imported channel: %+v %v", channel, err)
 			}
 		}

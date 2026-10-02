@@ -88,7 +88,7 @@ func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []c
 	if req.SourceType == "" {
 		req.SourceType = "youtube"
 	}
-	if req.SourceType != "youtube" && req.SourceType != "stream" {
+	if req.SourceType != "youtube" && req.SourceType != "stream" && req.SourceType != "tvb" {
 		return core.BulkChannelResult{}, nil, invalid("来源类型无效")
 	}
 	if len(req.Text) > maxBulkText {
@@ -134,6 +134,9 @@ func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []c
 			if ch.IsStream() {
 				item.Message = "链接无效，请使用公网 HTTP/HTTPS 直播地址"
 			}
+			if ch.IsTVB() {
+				item.Message = "请使用 TVB 新闻 C 或财经 F 频道的官网直播地址"
+			}
 		} else {
 			ch.URL = canonical
 			if !named {
@@ -141,6 +144,9 @@ func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []c
 				if ch.IsStream() {
 					u, _ := url.Parse(canonical)
 					ch.Name = u.Hostname()
+				}
+				if ch.IsTVB() {
+					ch.Name = map[string]string{"C": "无线新闻", "F": "无线财经"}[core.TVBChannelID(canonical)]
 				}
 			}
 			item.Name, item.URL = ch.Name, ch.URL

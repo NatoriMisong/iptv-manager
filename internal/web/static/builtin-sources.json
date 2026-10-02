@@ -84,6 +84,30 @@
           "note": "会议直播，节目安排以官网为准"
         }
       ]
+    },
+    {
+      "id": "tvb",
+      "name": "无线新闻",
+      "source_type": "tvb",
+      "default_mode": "relay",
+      "website": "https://news.tvb.com/tc/live/C",
+      "description": "无线新闻、无线财经。播放时按需获取来源和 Cookie，过期后由下次播放请求更新；刷新来源可清除会话缓存。推荐服务器中继。",
+      "channels": [
+        {
+          "id": "C",
+          "name": "无线新闻",
+          "url": "https://news.tvb.com/tc/live/C",
+          "selected": true,
+          "note": "TVB 新闻 C 频道"
+        },
+        {
+          "id": "F",
+          "name": "无线财经",
+          "url": "https://news.tvb.com/tc/live/F",
+          "selected": true,
+          "note": "TVB 财经 F 频道"
+        }
+      ]
     }
   ]
 }

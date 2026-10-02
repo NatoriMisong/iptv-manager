@@ -110,7 +110,7 @@ function renderChannels() {
     const identity = node('div');
     const name = node('div', 'channel-name', ch.name);
     name.title = ch.name;
-    const sourceName = ch.subscription_id ? `M3U · ${state.subscriptions?.find(s => s.id === ch.subscription_id)?.name || '订阅'}` : ch.source_type === 'stream' ? '通用直播' : 'YouTube';
+    const sourceName = ch.subscription_id ? `M3U · ${state.subscriptions?.find(s => s.id === ch.subscription_id)?.name || '订阅'}` : ch.source_type === 'stream' ? '通用直播' : ch.source_type === 'tvb' ? 'TVB' : 'YouTube';
     identity.append(name, node('div', 'channel-meta', `${ch.group || '未分组'} · ${sourceName}`));
     cell.append(logo, identity);
     channel.append(cell);
@@ -118,8 +118,9 @@ function renderChannels() {
     const effectiveMode = ch.mode === 'inherit' ? state.settings.default_mode : ch.mode;
     mode.append(node('span', 'badge', effectiveMode === 'direct' ? '客户端直连' : '服务器中继'));
     if (ch.mode === 'inherit') mode.append(node('div', 'channel-meta', '继承全局'));
-    const quality = node('td', '', ch.source_type === 'stream' ? '原始画质' : `${ch.quality || state.settings.default_quality}p`);
-    if (!ch.quality && ch.source_type !== 'stream') quality.append(node('div', 'channel-meta', '继承全局'));
+    const originalQuality = ch.source_type === 'stream' || ch.source_type === 'tvb';
+    const quality = node('td', '', originalQuality ? '原始画质' : `${ch.quality || state.settings.default_quality}p`);
+    if (!ch.quality && !originalQuality) quality.append(node('div', 'channel-meta', '继承全局'));
     const source = node('td');
     const status = state.statuses?.[ch.id];
     const kind = ch.source_missing ? 'missing' : !ch.enabled ? 'disabled' : status?.state || 'unknown';
@@ -183,11 +184,16 @@ function editChannel(channel) {
 }
 function updateSourceFields(prefix) {
   const stream = $(`#${prefix}-type`).value === 'stream';
-  $(`#${prefix}-quality-field`).hidden = stream;
-  if (stream) $(`#${prefix}-quality`).value = '0';
+  const tvb = $(`#${prefix}-type`).value === 'tvb';
+  $(`#${prefix}-quality-field`).hidden = stream || tvb;
+  if (stream || tvb) $(`#${prefix}-quality`).value = '0';
   if (prefix === 'channel') {
     $('#channel-url').placeholder = stream ? 'https://example.com/live.m3u8' : 'https://www.youtube.com/watch?v=…';
     $('#channel-source-help').textContent = stream ? '支持公网 HTTP/HTTPS HLS 和媒体直播地址。直连由播放器连接原始来源，中继由服务器转发。' : '通过 yt-dlp 按需解析 YouTube 直播；支持 watch?v=… 和 youtu.be/… 链接。';
+    if (tvb) {
+      $('#channel-url').placeholder = 'https://news.tvb.com/tc/live/C 或 /F';
+      $('#channel-source-help').textContent = 'C 为无线新闻，F 为无线财经。播放时获取并复用来源和 Cookie；刷新来源会清除缓存。推荐中继，原始画质由播放器选择。';
+    }
   } else {
     $('#bulk-text').placeholder = stream ? '新闻频道,https://example.com/live.m3u8\nhttps://example.com/channel.ts' : '中天新闻,https://www.youtube.com/watch?v=vr3XyVCR4T0\nhttps://youtu.be/V1p33hqPrUk';
   }
@@ -226,6 +232,7 @@ function renderBuiltinSources() {
   $('#builtin-description').textContent = source.description;
   $('#builtin-website').href = source.website;
   $('#builtin-group').value = source.name;
+  $('#builtin-mode').value = source.default_mode || 'inherit';
   source.channels.forEach(channel => {
     const row = node('div', 'builtin-channel');
     const label = node('label', 'builtin-check');
@@ -238,7 +245,7 @@ function renderBuiltinSources() {
     detail.append(node('strong', '', channel.name));
     if (channel.note) detail.append(node('span', 'muted tiny', channel.note));
     label.append(checkbox, detail);
-    const link = node('a', 'builtin-url', '原始 M3U8 ↗');
+    const link = node('a', 'builtin-url', source.source_type === 'tvb' ? '官网直播 ↗' : '原始 M3U8 ↗');
     link.href = channel.url;
     link.title = channel.url;
     link.target = '_blank';
@@ -269,7 +276,7 @@ $('#builtin-form').addEventListener('submit', async event => {
   const selected = new Set($$('#builtin-channels input:checked').map(input => input.value));
   const channels = source.channels.filter(channel => selected.has(channel.id));
   if (!channels.length) return;
-  const body = { source_type: 'stream', text: channels.map(channel => `${channel.name},${channel.url}`).join('\n'), group: $('#builtin-group').value.trim(), mode: $('#builtin-mode').value, quality: 0 };
+  const body = { source_type: source.source_type || 'stream', text: channels.map(channel => `${channel.name},${channel.url}`).join('\n'), group: $('#builtin-group').value.trim(), mode: $('#builtin-mode').value, quality: 0 };
   const controls = $$('input, select, button', event.currentTarget);
   builtinSubmitting = true;
   busy = true;

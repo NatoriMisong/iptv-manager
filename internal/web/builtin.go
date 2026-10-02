@@ -2,8 +2,8 @@ package web
 
 import "net/http"
 
-// The catalog contains public URLs captured from each broadcaster's own site.
-// Adding entries uses the normal stream bulk API; no resolver runs on import.
+// Entries declare a source type; TVB stores its stable official channel page.
+// Adding entries uses the bulk API; no resolver runs on import.
 func (s *server) builtinSources(w http.ResponseWriter, r *http.Request) {
 	data, err := assets.ReadFile("static/builtin-sources.json")
 	if err != nil {
