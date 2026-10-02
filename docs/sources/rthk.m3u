@@ -1,0 +1,10 @@
+#EXTM3U
+# 港台电视官网当前直接使用的 HLS 地址；提取日期：2026-10-02。
+# 候选列表，尚未验证可播：此次代理出口请求均返回 HTTP 403。
+# 31 台使用 DRM；32 台当前使用专用播放器；详见 rthk.md。
+#EXTINF:-1 tvg-id="rthk-tv33" group-title="港台电视",港台電視 33
+https://rthktv33-vos-live.akamaized.net/Content/HLS/Live/channel(rthk_ch33)/index.m3u8
+#EXTINF:-1 tvg-id="rthk-tv34" group-title="港台电视",港台電視 34
+https://rthktv34-vos-live.akamaized.net/Content/HLS/Live/channel(rthk_ch34)/index.m3u8
+#EXTINF:-1 tvg-id="rthk-tv35" group-title="港台电视",港台電視 35
+https://rthktv35-vos-live.akamaized.net/Content/HLS/Live/channel(rthk_ch35)/index.m3u8
