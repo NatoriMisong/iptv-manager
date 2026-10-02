@@ -18,6 +18,7 @@ type memoryRepo struct {
 	channels []core.Channel
 	settings core.Settings
 	changes  int
+	bulkErr  error
 }
 
 func (r *memoryRepo) Channels(context.Context) ([]core.Channel, error) { return r.channels, nil }
@@ -35,6 +36,10 @@ func (r *memoryRepo) SaveChannel(_ context.Context, ch core.Channel) (core.Chann
 		ch.ID = "created"
 	}
 	return ch, nil
+}
+func (r *memoryRepo) AddChannels(context.Context, core.BulkChannelRequest) (core.BulkChannelResult, error) {
+	r.changes++
+	return core.BulkChannelResult{}, r.bulkErr
 }
 func (r *memoryRepo) DeleteChannel(context.Context, string) error     { r.changes++; return nil }
 func (r *memoryRepo) Reorder(context.Context, []string) error         { r.changes++; return nil }
@@ -123,7 +128,7 @@ func loginAsAdmin(t *testing.T, h http.Handler) (*http.Cookie, string) {
 
 func TestUnauthenticatedMutationsNeverReachRepository(t *testing.T) {
 	h, repo, media := setup(t)
-	for _, route := range []struct{ method, path string }{{"POST", "/api/channels"}, {"DELETE", "/api/channels/test-channel"}, {"PUT", "/api/settings"}, {"POST", "/api/restore"}, {"POST", "/api/token"}, {"POST", "/api/channels/test-channel/refresh"}} {
+	for _, route := range []struct{ method, path string }{{"POST", "/api/channels"}, {"POST", "/api/channels/bulk"}, {"DELETE", "/api/channels/test-channel"}, {"PUT", "/api/settings"}, {"POST", "/api/restore"}, {"POST", "/api/token"}, {"POST", "/api/channels/test-channel/refresh"}} {
 		w := request(h, route.method, route.path, `{}`, nil, "", "")
 		if w.Code != 401 {
 			t.Errorf("%s %s: %d", route.method, route.path, w.Code)

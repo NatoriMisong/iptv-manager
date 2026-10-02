@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 	"youtube-tv/internal/core"
+	"youtube-tv/internal/store"
 )
 
 //go:embed static/*
@@ -29,6 +30,7 @@ type Repository interface {
 	Channels(context.Context) ([]core.Channel, error)
 	Channel(context.Context, string) (core.Channel, error)
 	SaveChannel(context.Context, core.Channel) (core.Channel, error)
+	AddChannels(context.Context, core.BulkChannelRequest) (core.BulkChannelResult, error)
 	DeleteChannel(context.Context, string) error
 	Reorder(context.Context, []string) error
 	Settings(context.Context) (core.Settings, error)
@@ -88,6 +90,7 @@ func New(repo Repository, media Media, opts Options) (http.Handler, error) {
 	mux.HandleFunc("POST /api/logout", s.auth(s.logout))
 	mux.HandleFunc("GET /api/state", s.auth(s.state))
 	mux.HandleFunc("POST /api/channels", s.auth(s.saveChannel))
+	mux.HandleFunc("POST /api/channels/bulk", s.auth(s.addChannels))
 	mux.HandleFunc("PUT /api/channels/{id}", s.auth(s.saveChannel))
 	mux.HandleFunc("DELETE /api/channels/{id}", s.auth(s.deleteChannel))
 	mux.HandleFunc("POST /api/channels/{id}/refresh", s.auth(s.refresh))
@@ -344,6 +347,23 @@ func (s *server) saveChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	s.media.Invalidate(saved.ID)
 	respond(w, 200, saved)
+}
+
+func (s *server) addChannels(w http.ResponseWriter, r *http.Request) {
+	var req core.BulkChannelRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	result, err := s.repo.AddChannels(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, store.ErrValidation) {
+			fail(w, 400, strings.TrimPrefix(err.Error(), store.ErrValidation.Error()+": "))
+		} else {
+			fail(w, 500, "批量保存失败，本批次未写入，请稍后重试")
+		}
+		return
+	}
+	respond(w, 200, result)
 }
 
 func (s *server) deleteChannel(w http.ResponseWriter, r *http.Request) {

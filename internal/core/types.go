@@ -16,6 +16,31 @@ type Channel struct {
 	Proxy     string `json:"proxy"`   // inherit, direct, or an HTTP(S)/SOCKS5 URL
 }
 
+// BulkChannelRequest adds channels from one URL or "name,URL" per line.
+// New channels are enabled and inherit the global proxy.
+type BulkChannelRequest struct {
+	Text    string `json:"text"`
+	Group   string `json:"group"`
+	Mode    string `json:"mode"`
+	Quality int    `json:"quality"`
+}
+
+type BulkChannelItem struct {
+	Line      int    `json:"line"`
+	Name      string `json:"name"`
+	URL       string `json:"url,omitempty"`
+	ChannelID string `json:"channel_id,omitempty"`
+	Status    string `json:"status"` // added, skipped, failed
+	Message   string `json:"message"`
+}
+
+type BulkChannelResult struct {
+	Added   int               `json:"added"`
+	Skipped int               `json:"skipped"`
+	Failed  int               `json:"failed"`
+	Results []BulkChannelItem `json:"results"`
+}
+
 type Settings struct {
 	BaseURL         string `json:"base_url"`
 	DefaultMode     string `json:"default_mode"`

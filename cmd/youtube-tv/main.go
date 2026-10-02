@@ -23,7 +23,7 @@ import (
 	"youtube-tv/internal/web"
 )
 
-var version = "0.1.1"
+var version = "0.1.2"
 
 func env(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {

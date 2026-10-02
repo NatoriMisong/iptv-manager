@@ -5,6 +5,7 @@ let state = null;
 let csrf = '';
 let toastTimer;
 let busy = false;
+let bulkSubmitting = false;
 function toast(message, failed = false) {
   const el = $('#toast');
   el.textContent = message;
@@ -173,6 +174,30 @@ function fillSettings() {
   Object.entries(state.settings).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
   if (!state.settings.base_url) form.elements.namedItem('base_url').value = location.origin;
 }
+function updateBulkCount() {
+  const input = $('#bulk-text');
+  const count = input.value.split('\n').filter(line => line.trim()).length;
+  $('#bulk-count').textContent = `${count} / 100`;
+  input.setCustomValidity(count > 100 ? '每批最多添加 100 行频道，请分批提交' : '');
+}
+function renderBulkResult(result) {
+  const labels = { added: '已添加', skipped: '已跳过', failed: '失败' };
+  const list = $('#bulk-result-list');
+  list.replaceChildren();
+  result.results.forEach(item => {
+    const row = node('li');
+    const detail = node('div');
+    detail.append(node('strong', '', `第 ${item.line} 行${item.name ? ` · ${item.name}` : ''}`));
+    detail.append(node('p', 'muted tiny', item.message));
+    if (item.url) detail.append(node('p', 'muted tiny', item.url));
+    row.append(node('span', `badge bulk-${item.status}`, labels[item.status] || '未知'), detail);
+    list.append(row);
+  });
+  $('#bulk-summary').textContent = `已添加 ${result.added} 个 · 跳过 ${result.skipped} 个 · 失败 ${result.failed} 个`;
+  $('#bulk-results').hidden = false;
+  $('#bulk-summary').focus();
+  $('#bulk-submit').scrollIntoView({ block: 'nearest' });
+}
 function subscription(mode) {
   const base = (state.settings.base_url || location.origin).replace(/\/+$/, '');
   const url = new URL(`${base}/playlist.m3u`);
@@ -215,6 +240,43 @@ $('#logout').addEventListener('click', () => perform(async () => { await api('/l
 $('#reload').addEventListener('click', () => perform(async () => { await loadState({ background: true }); toast('状态已更新'); }));
 $('#add-channel').addEventListener('click', () => editChannel());
 $('#empty-add').addEventListener('click', () => editChannel());
+$('#bulk-add').addEventListener('click', () => {
+  $('#bulk-form').reset();
+  $('#bulk-error').textContent = '';
+  $('#bulk-results').hidden = true;
+  $('#bulk-result-list').replaceChildren();
+  updateBulkCount();
+  $('#bulk-dialog').showModal();
+  $('#bulk-text').focus();
+});
+$('#bulk-text').addEventListener('input', updateBulkCount);
+$('#bulk-dialog').addEventListener('cancel', event => { if (bulkSubmitting) event.preventDefault(); });
+$('#bulk-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (bulkSubmitting || busy) return;
+  const form = event.currentTarget;
+  const data = Object.fromEntries(new FormData(form));
+  data.quality = Number(data.quality);
+  const controls = $$('input, textarea, select, button', form);
+  bulkSubmitting = true;
+  busy = true;
+  controls.forEach(control => { control.disabled = true; });
+  $('#bulk-submit').textContent = '正在添加…';
+  $('#bulk-error').textContent = '';
+  $('#bulk-results').hidden = true;
+  try {
+    const result = await api('/channels/bulk', { method: 'POST', body: data });
+    renderBulkResult(result);
+    try { await loadState({ background: true }); }
+    catch (error) { $('#bulk-error').textContent = `添加结果已返回，但频道列表刷新失败：${error.message}`; }
+  } catch (error) { $('#bulk-error').textContent = error.message; }
+  finally {
+    controls.forEach(control => { control.disabled = false; });
+    $('#bulk-submit').textContent = '添加频道';
+    bulkSubmitting = false;
+    busy = false;
+  }
+});
 $$('[data-view]').forEach(button => button.addEventListener('click', () => {
   $$('[data-view]').forEach(b => b.classList.toggle('active', b === button));
   $('#view-channels').hidden = button.dataset.view !== 'channels';
