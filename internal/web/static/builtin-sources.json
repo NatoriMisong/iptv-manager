@@ -108,6 +108,23 @@
           "note": "TVB 财经 F 频道"
         }
       ]
+    },
+    {
+      "id": "hkstv",
+      "name": "香港卫视",
+      "source_type": "stream",
+      "default_mode": "relay",
+      "website": "https://hkstv.tv/live",
+      "description": "香港卫视官网直播，默认服务器中继，也可选择客户端直连。代理继承全局设置，添加后可逐频道修改。",
+      "channels": [
+        {
+          "id": "mutfysrq",
+          "name": "香港卫视",
+          "url": "https://webcast.hkstv.tv/livestream/mutfysrq/playlist.m3u8",
+          "selected": true,
+          "note": "官网 HTTPS HLS 直播"
+        }
+      ]
     }
   ]
 }

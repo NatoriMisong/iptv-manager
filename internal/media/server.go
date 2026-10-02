@@ -399,6 +399,11 @@ func (s *Server) fetch(ctx context.Context, ref resource, rangeHeader string) (*
 		}
 		return nil, err
 	}
+	if ref.Stream {
+		// Browser-facing live sources such as HKSTV reject Go's default UA.
+		// Use the same default for manifests and media, preserving overrides.
+		req.Header.Set("User-Agent", "Mozilla/5.0")
+	}
 	for k, v := range ref.Headers {
 		switch http.CanonicalHeaderKey(k) {
 		case "User-Agent", "Referer", "Origin", "Accept", "Accept-Language":

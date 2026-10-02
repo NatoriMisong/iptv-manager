@@ -15,6 +15,11 @@ func TestGenericStreamDirectAndHLSRelaySkipResolver(t *testing.T) {
 	var calls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		// HKSTV returns 502 for the default Go UA, including its HLS entry.
+		if r.UserAgent() == "" || strings.HasPrefix(r.UserAgent(), "Go-http-client/") {
+			http.Error(w, "unsupported client", http.StatusBadGateway)
+			return
+		}
 		switch r.URL.Path {
 		case "/entry":
 			http.Redirect(w, r, "/live/master", 302)
