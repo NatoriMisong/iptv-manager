@@ -7,7 +7,7 @@
 | 无线新闻 | C | <https://news.tvb.com/tc/live/C> |
 | 无线财经 | F | <https://news.tvb.com/tc/live/F> |
 
-在管理页“添加频道 → 内置直播源 → 无线新闻”选择添加。数据库保存官网页，来源类型为 `tvb`，默认中继。导出的 M3U 使用本服务固定播放入口，不能把临时签名 M3U8 当作永久来源保存。
+在管理页“添加频道 → 内置直播源 → 无线新闻”选择添加。数据库保存官网页，来源类型为 `builtin`，`provider_id=tvb`，`provider_channel_id` 为 `C` 或 `F`，默认中继。官方接口和 Cookie 逻辑由 `internal/provider/tvb.go` 独立处理。添加频道的来源类型不再提供单独的 TVB 选项。导出的 M3U 使用本服务固定播放入口，不能把临时签名 M3U8 当作永久来源保存。
 
 ## 官网播放流程
 

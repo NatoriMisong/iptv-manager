@@ -75,7 +75,7 @@ func TestSubscriptionReconciliationAndBackup(t *testing.T) {
 	if !reflect.DeepEqual(backup, unchanged) {
 		t.Fatal("partially applied invalid subscription update")
 	}
-	if backup.Version != 2 || len(backup.Subscriptions) != 1 {
+	if backup.Version != 3 || len(backup.Subscriptions) != 1 {
 		t.Fatalf("backup: %+v", backup)
 	}
 	other := testStore(t)

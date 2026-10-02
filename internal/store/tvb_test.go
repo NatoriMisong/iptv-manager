@@ -13,20 +13,24 @@ func TestTVBChannelValidationBulkAndBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	for _, raw := range []string{"https://news.tvb.com/tc/live/C", "https://news.tvb.com/en/live/F/"} {
-		ch, err := s.SaveChannel(testContext, core.Channel{Name: "TVB", SourceType: "tvb", URL: raw, Enabled: true, Quality: 720})
-		if err != nil || !ch.IsTVB() || ch.Quality != 0 || !strings.HasPrefix(ch.URL, "https://news.tvb.com/tc/live/") {
-			t.Fatalf("TVB save: %+v %v", ch, err)
+	for _, key := range []string{"C", "F"} {
+		ch, err := s.SaveChannel(testContext, core.Channel{Name: "TVB", SourceType: "builtin", ProviderID: "tvb", ProviderChannelID: key, Enabled: true, Quality: 720})
+		if err != nil || !ch.IsBuiltin() || ch.Quality != 0 || !strings.HasPrefix(ch.URL, "https://news.tvb.com/tc/live/") {
+			t.Fatalf("builtin save: %+v %v", ch, err)
 		}
 	}
-	for _, raw := range []string{"https://news.tvb.com/tc/live/X", "https://news.tvb.com.evil.test/tc/live/C", "http://news.tvb.com/tc/live/C", "https://user:pass@news.tvb.com/tc/live/C", "https://news.tvb.com:443/tc/live/C", "https://news.tvb.com/tc/live/C?hdnea=secret", "https://news.tvb.com/tc/live/%43"} {
-		if _, err := s.SaveChannel(testContext, core.Channel{Name: "bad", SourceType: "tvb", URL: raw}); err == nil {
-			t.Fatalf("invalid TVB page accepted: %s", raw)
+	for _, ch := range []core.Channel{
+		{Name: "bad", SourceType: "builtin", ProviderID: "tvb", ProviderChannelID: "X"},
+		{Name: "bad", SourceType: "builtin", ProviderID: "unknown", ProviderChannelID: "C"},
+		{Name: "bad", SourceType: "stream", ProviderID: "tvb", ProviderChannelID: "C", URL: "https://news.tvb.com/tc/live/C"},
+	} {
+		if _, err := s.SaveChannel(testContext, ch); err == nil {
+			t.Fatal("invalid provider identity accepted")
 		}
 	}
-	result, err := s.AddChannels(testContext, core.BulkChannelRequest{SourceType: "tvb", Text: "无线新闻,https://news.tvb.com/tc/live/C\n无线财经,https://news.tvb.com/tc/live/F", Mode: "relay"})
+	result, err := s.AddChannels(testContext, core.BulkChannelRequest{SourceType: "builtin", ProviderID: "tvb", ChannelIDs: []string{"C", "F"}, Mode: "relay"})
 	if err != nil || result.Skipped != 2 || result.Added != 0 {
-		t.Fatalf("TVB duplicate import: %+v %v", result, err)
+		t.Fatalf("duplicate import: %+v %v", result, err)
 	}
 	backup, err := s.Export(testContext)
 	if err != nil {
@@ -41,7 +45,7 @@ func TestTVBChannelValidationBulkAndBackup(t *testing.T) {
 	}
 	count := 0
 	for _, ch := range channels {
-		if ch.IsTVB() {
+		if ch.IsBuiltin() && ch.ProviderID == "tvb" {
 			count++
 		}
 	}

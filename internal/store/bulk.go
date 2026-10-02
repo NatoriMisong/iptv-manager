@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"iptv-manager/internal/core"
+	"iptv-manager/internal/provider"
 )
 
 const maxBulkChannels = 100
@@ -24,24 +25,25 @@ func (s *Store) AddChannels(ctx context.Context, req core.BulkChannelRequest) (c
 		return core.BulkChannelResult{}, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id,url,sort_order,source_type FROM channels ORDER BY sort_order,id`)
+	rows, err := tx.QueryContext(ctx, `SELECT `+channelFields+` FROM channels ORDER BY sort_order,id`)
 	if err != nil {
 		return core.BulkChannelResult{}, err
 	}
 	seen := make(map[string]string)
 	nextOrder := 0
 	for rows.Next() {
-		var id, rawURL, kind string
-		var order int
-		if err := rows.Scan(&id, &rawURL, &order, &kind); err != nil {
+		ch, err := scanChannel(rows)
+		if err != nil {
 			rows.Close()
 			return core.BulkChannelResult{}, err
 		}
-		if canonical, err := channelURL(kind, rawURL); err == nil && seen[kind+"\x00"+canonical] == "" {
-			seen[kind+"\x00"+canonical] = id
+		for _, key := range []string{channelIdentity(ch), channelIdentity(provider.UpgradeLegacy(ch))} {
+			if seen[key] == "" {
+				seen[key] = ch.ID
+			}
 		}
-		if order >= nextOrder {
-			nextOrder = order + 1
+		if ch.SortOrder >= nextOrder {
+			nextOrder = ch.SortOrder + 1
 		}
 	}
 	err = rows.Err()
@@ -57,7 +59,11 @@ func (s *Store) AddChannels(ctx context.Context, req core.BulkChannelRequest) (c
 		if item.Status == "failed" {
 			continue
 		}
-		if id := seen[ch.SourceType+"\x00"+ch.URL]; id != "" {
+		id := seen[channelIdentity(ch)]
+		if id == "" {
+			id = seen[channelIdentity(provider.UpgradeLegacy(ch))]
+		}
+		if id != "" {
 			item.Status, item.Message, item.ChannelID = "skipped", "此链接已存在，已跳过", id
 			result.Skipped++
 			continue
@@ -74,7 +80,7 @@ func (s *Store) AddChannels(ctx context.Context, req core.BulkChannelRequest) (c
 			return core.BulkChannelResult{}, err
 		}
 		nextOrder++
-		seen[ch.SourceType+"\x00"+ch.URL] = ch.ID
+		seen[channelIdentity(ch)] = ch.ID
 		item.Status, item.Message, item.ChannelID = "added", "已添加", ch.ID
 		result.Added++
 	}
@@ -85,10 +91,13 @@ func (s *Store) AddChannels(ctx context.Context, req core.BulkChannelRequest) (c
 }
 
 func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []core.Channel, error) {
+	if req.SourceType == "builtin" || req.ProviderID != "" || len(req.ChannelIDs) > 0 {
+		return parseBuiltinChannels(req)
+	}
 	if req.SourceType == "" {
 		req.SourceType = "youtube"
 	}
-	if req.SourceType != "youtube" && req.SourceType != "stream" && req.SourceType != "tvb" {
+	if req.SourceType != "youtube" && req.SourceType != "stream" {
 		return core.BulkChannelResult{}, nil, invalid("来源类型无效")
 	}
 	if len(req.Text) > maxBulkText {
@@ -134,9 +143,6 @@ func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []c
 			if ch.IsStream() {
 				item.Message = "链接无效，请使用公网 HTTP/HTTPS 直播地址"
 			}
-			if ch.IsTVB() {
-				item.Message = "请使用 TVB 新闻 C 或财经 F 频道的官网直播地址"
-			}
 		} else {
 			ch.URL = canonical
 			if !named {
@@ -144,9 +150,6 @@ func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []c
 				if ch.IsStream() {
 					u, _ := url.Parse(canonical)
 					ch.Name = u.Hostname()
-				}
-				if ch.IsTVB() {
-					ch.Name = map[string]string{"C": "无线新闻", "F": "无线财经"}[core.TVBChannelID(canonical)]
 				}
 			}
 			item.Name, item.URL = ch.Name, ch.URL

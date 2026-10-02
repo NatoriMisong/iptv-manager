@@ -148,7 +148,7 @@ func TestStableChannelIDs(t *testing.T) {
 }
 
 func TestUnsupportedSchemaIsNotModified(t *testing.T) {
-	for _, version := range []int{1, 3} {
+	for _, version := range []int{1, 4} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "iptv-manager.db")
 			db, err := sql.Open("sqlite", path)
@@ -228,7 +228,7 @@ func TestImportIsAtomicAndExcludesAdmin(t *testing.T) {
 			case "older-version":
 				backup.Version = 1
 			case "newer-version":
-				backup.Version = 3
+				backup.Version = 4
 			}
 			if err := s.Import(testContext, backup); !errors.Is(err, ErrValidation) {
 				t.Fatalf("import error = %v", err)

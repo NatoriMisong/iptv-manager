@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 	"iptv-manager/internal/core"
+	"iptv-manager/internal/provider"
 	"iptv-manager/internal/store"
 	"iptv-manager/internal/subscription"
 )
@@ -343,7 +344,7 @@ func (s *server) state(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	csrf := s.sessions[c.Value].csrf
 	s.mu.Unlock()
-	respond(w, 200, map[string]any{"channels": channels, "subscriptions": subs, "settings": settings, "statuses": s.media.Statuses(), "traffic": traffic, "version": s.opts.Version, "csrf": csrf})
+	respond(w, 200, map[string]any{"channels": channels, "builtin_sources": provider.Catalogs(), "subscriptions": subs, "settings": settings, "statuses": s.media.Statuses(), "traffic": traffic, "version": s.opts.Version, "csrf": csrf})
 }
 
 func (s *server) saveChannel(w http.ResponseWriter, r *http.Request) {
@@ -454,8 +455,8 @@ func (s *server) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.media.Invalidate(id)
-	if ch.IsTVB() {
-		respond(w, 200, map[string]string{"message": "已清除 TVB 播放地址、Cookie 和媒体缓存，下次播放时重新获取"})
+	if ch.IsBuiltin() {
+		respond(w, 200, map[string]string{"message": "已清除内置来源的播放地址、会话 Cookie 和媒体缓存，下次播放时重新获取"})
 		return
 	}
 	if ch.IsStream() {

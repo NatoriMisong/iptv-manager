@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
@@ -53,22 +52,22 @@ func TestBuiltinSourcesImportThroughBulkAPI(t *testing.T) {
 		if len(source.Channels) == 0 {
 			t.Fatalf("empty source: %s", source.ID)
 		}
-		lines := make([]string, len(source.Channels))
+		keys := make([]string, len(source.Channels))
 		for i, channel := range source.Channels {
-			lines[i] = channel.Name + "," + channel.URL
+			keys[i] = channel.ID
 		}
-		body, err := json.Marshal(core.BulkChannelRequest{SourceType: kind, Text: strings.Join(lines, "\n"), Group: source.Name, Mode: "direct"})
+		body, err := json.Marshal(core.BulkChannelRequest{SourceType: kind, ProviderID: source.ID, ChannelIDs: keys, Group: source.Name, Mode: "direct"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		w = request(handler, "POST", "/api/channels/bulk", string(body), cookie, csrf, "")
 		var result core.BulkChannelResult
-		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil || result.Added != len(lines) || result.Failed != 0 || result.Skipped != 0 {
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil || result.Added != len(keys) || result.Failed != 0 || result.Skipped != 0 {
 			t.Fatalf("builtin import failed: %d %s", w.Code, w.Body.String())
 		}
 		for i, item := range result.Results {
 			channel, err := repo.Channel(ctx, item.ChannelID)
-			if err != nil || channel.SourceType != kind || channel.Mode != "direct" || channel.Proxy != "inherit" || channel.Group != source.Name || channel.Name != source.Channels[i].Name || channel.URL != source.Channels[i].URL {
+			if err != nil || channel.SourceType != kind || channel.ProviderID != source.ID || channel.ProviderChannelID != source.Channels[i].ID || channel.Mode != "direct" || channel.Proxy != "inherit" || channel.Group != source.Name || channel.Name != source.Channels[i].Name || channel.URL != source.Channels[i].URL {
 				t.Fatalf("invalid imported channel: %+v %v", channel, err)
 			}
 		}
@@ -78,7 +77,7 @@ func TestBuiltinSourcesImportThroughBulkAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 		w = request(handler, "POST", "/api/channels/bulk", string(body), cookie, csrf, "")
-		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil || result.Added != 0 || result.Skipped != len(lines) || result.Failed != 0 {
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil || result.Added != 0 || result.Skipped != len(keys) || result.Failed != 0 {
 			t.Fatalf("duplicate builtin import failed: %d %s", w.Code, w.Body.String())
 		}
 		preserved, _ := repo.Channel(ctx, first.ID)

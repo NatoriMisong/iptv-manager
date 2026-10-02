@@ -45,12 +45,12 @@
           <p class="tiny muted subscription-help">中继：设备只连接服务器。直连：设备需能访问原始直播源，且来源允许该设备使用。地址包含播放令牌，请仅分享给自己的设备。</p>
         </section>
         <section class="panel channels-panel" aria-labelledby="channels-title">
-          <div class="panel-heading"><div><h2 id="channels-title">频道列表 <span id="table-count" class="count-pill">0</span></h2><p class="muted">支持直连或中继；YouTube、TVB 按需解析，通用源直接连接。</p></div><button id="reload" class="quiet">↻ 刷新状态</button></div>
+          <div class="panel-heading"><div><h2 id="channels-title">频道列表 <span id="table-count" class="count-pill">0</span></h2><p class="muted">支持直连或中继；内置源统一管理，YouTube 按需解析，通用源直接连接。</p></div><button id="reload" class="quiet">↻ 刷新状态</button></div>
           <div class="table-wrap"><table><thead><tr><th class="order-col">排序</th><th>频道</th><th>播放方式</th><th>画质上限</th><th>来源状态</th><th>启用</th><th class="actions-head">操作</th></tr></thead><tbody id="channel-rows"></tbody></table></div>
           <div id="empty-state" class="empty" hidden><span aria-hidden="true">▷</span><h3>从第一个直播频道开始</h3><p class="muted">添加直播地址、M3U 订阅或 YouTube 直播，生成自己的 IPTV 订阅。</p><button id="empty-add" class="outline">添加频道</button></div>
           <div class="table-footer"><span class="muted tiny">频道地址保持固定，调整排序不会影响播放链接。</span><button id="backup" class="quiet">导出配置</button><button id="restore" class="quiet">导入配置</button><input id="restore-file" type="file" accept="application/json,.json" hidden></div>
         </section>
-        <p class="footnote">原始直播直连或中继 · M3U 订阅自动更新 · YouTube / TVB 按需解析 · 不转码</p>
+        <p class="footnote">原始直播直连或中继 · M3U 订阅自动更新 · 来源按需获取 · 不转码</p>
       </section>
       <section id="view-subscriptions" hidden>
         <div class="page-heading"><div><p class="eyebrow">KEEP YOUR CHANNELS CURRENT</p><h1>M3U 订阅</h1><p class="muted">定时更新频道名称、分组、图标和直播地址。</p></div><button id="add-subscription" class="primary">＋ 添加订阅</button></div>
@@ -76,7 +76,8 @@
   <dialog id="channel-dialog" aria-labelledby="channel-dialog-title"><form id="channel-form">
     <div class="dialog-heading"><div><p class="eyebrow">LIVE CHANNEL</p><h2 id="channel-dialog-title">添加频道</h2></div><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div>
     <input name="id" type="hidden"><input name="sort_order" type="hidden" value="0">
-    <label for="channel-type">来源类型</label><select id="channel-type" name="source_type"><option value="stream">通用直播源（M3U8 / HTTP）</option><option value="youtube">YouTube 直播</option><option value="tvb">无线新闻（TVB）</option><option id="channel-builtin-option" value="builtin">内置直播源</option></select>
+    <label id="channel-type-label" for="channel-type">来源类型</label><select id="channel-type" name="source_type"><option value="stream">通用直播源（M3U8 / HTTP）</option><option value="youtube">YouTube 直播</option><option id="channel-builtin-option" value="builtin">内置直播源</option></select>
+    <p id="channel-provider-info" class="field-help" hidden></p>
     <p id="channel-managed" class="field-help" hidden>此频道来自 M3U 订阅，名称、分组、图标和地址随订阅同步。可以在这里调整播放方式、代理和启停状态。</p>
     <label for="channel-name">频道名称</label><input id="channel-name" name="name" maxlength="120" required placeholder="例如：新闻频道">
     <label for="channel-url">直播来源地址</label><input id="channel-url" name="url" type="url" required placeholder="https://example.com/live.m3u8"><p id="channel-source-help" class="field-help"></p>
@@ -92,7 +93,7 @@
     <div class="builtin-toolbar"><span id="builtin-count" class="muted tiny" role="status"></span><button id="builtin-select-all" type="button" class="quiet">全选</button><button id="builtin-select-none" type="button" class="quiet">清空</button></div>
     <div id="builtin-channels" class="builtin-channels" role="group" aria-label="选择内置频道"></div>
     <div class="form-grid"><div><label for="builtin-group">分组</label><input id="builtin-group" maxlength="150" required></div><div><label for="builtin-mode">播放方式</label><select id="builtin-mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div></div>
-    <p class="field-help">按所选来源类型添加，重复地址自动跳过。代理继承全局设置，添加后可逐个修改。TVB 推荐中继；直连需要播放器支持来源 Cookie，且客户端能访问 TVB。</p>
+    <p class="field-help">重复来源自动跳过。代理继承全局设置，添加后可逐个修改。</p><p id="builtin-help" class="field-help"></p>
     <p id="builtin-error" class="error" role="alert"></p><p id="builtin-result" role="status" hidden></p>
     <div class="dialog-footer"><button type="button" class="outline close-dialog">关闭</button><button id="builtin-submit" type="submit" class="primary">添加所选频道</button></div>
   </form></dialog>

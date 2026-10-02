@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"iptv-manager/internal/core"
+	"iptv-manager/internal/provider"
 	"iptv-manager/internal/source"
 )
 
@@ -134,9 +135,16 @@ func normalizeChannel(ch core.Channel) (core.Channel, error) {
 	if ch.SourceType == "" {
 		ch.SourceType = "youtube"
 	}
-	ch.URL, err = channelURL(ch.SourceType, ch.URL)
+	if ch.IsBuiltin() {
+		ch, err = provider.Normalize(ch)
+	} else {
+		if ch.ProviderID != "" || ch.ProviderChannelID != "" {
+			return ch, invalid("普通来源不能带内置来源标识")
+		}
+		ch.URL, err = channelURL(ch.SourceType, ch.URL)
+	}
 	if err != nil {
-		return ch, err
+		return ch, invalid("%s", err)
 	}
 	if ch.Logo != "" {
 		u, err := url.Parse(ch.Logo)
@@ -153,7 +161,7 @@ func normalizeChannel(ch core.Channel) (core.Channel, error) {
 	if !validQuality(ch.Quality, true) {
 		return ch, invalid("unsupported channel quality")
 	}
-	if ch.IsStream() || ch.IsTVB() {
+	if ch.IsStream() || ch.IsBuiltin() {
 		ch.Quality = 0
 	}
 	if ch.SortOrder < 0 {
@@ -164,12 +172,6 @@ func normalizeChannel(ch core.Channel) (core.Channel, error) {
 }
 
 func channelURL(kind, raw string) (string, error) {
-	if kind == "tvb" {
-		if id := core.TVBChannelID(raw); id != "" {
-			return "https://news.tvb.com/tc/live/" + id, nil
-		}
-		return "", invalid("TVB 来源必须是 https://news.tvb.com/tc/live/C 或 /F")
-	}
 	if kind == "" || kind == "youtube" {
 		return youtubeURL(raw)
 	}

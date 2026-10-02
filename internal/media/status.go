@@ -30,13 +30,13 @@ func (s *Server) Statuses() map[string]core.ChannelStatus {
 }
 
 func (s *Server) Invalidate(id string) {
-	s.tvb.invalidate(id)
+	s.providers.Invalidate(id)
 	s.resolver.Invalidate(id)
 	s.mu.Lock()
 	delete(s.failures, id)
 	delete(s.selectionRefreshes, id)
 	for key, ref := range s.resources {
-		if ref.Channel == id && ref.TVB != nil {
+		if ref.Channel == id && ref.Session != nil {
 			delete(s.resources, key)
 		}
 	}
@@ -48,8 +48,8 @@ func (s *Server) Invalidate(id string) {
 		if ch.IsStream() {
 			s.reportState(id, "unknown", "等待连接原始直播源")
 		}
-		if ch.IsTVB() {
-			s.reportState(id, "unknown", "TVB 地址和 Cookie 已清除，等待下次播放")
+		if ch.IsBuiltin() {
+			s.reportState(id, "unknown", "内置来源缓存已清除，等待下次播放")
 		}
 	}
 }

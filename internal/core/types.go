@@ -4,30 +4,34 @@ import "time"
 
 // Channel IDs are permanent; SortOrder is independent of the playback URL.
 type Channel struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	URL            string `json:"url"`
-	SourceType     string `json:"source_type"` // youtube (default), stream, tvb
-	SubscriptionID string `json:"subscription_id,omitempty"`
-	SourceKey      string `json:"source_key,omitempty"`
-	SourceMissing  bool   `json:"source_missing,omitempty"`
-	Group          string `json:"group"`
-	Logo           string `json:"logo"`
-	Enabled        bool   `json:"enabled"`
-	SortOrder      int    `json:"sort_order"`
-	Mode           string `json:"mode"`    // inherit, relay, direct
-	Quality        int    `json:"quality"` // 0 inherits settings
-	Proxy          string `json:"proxy"`   // inherit, direct, or an HTTP(S)/SOCKS5 URL
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	URL               string `json:"url"`
+	SourceType        string `json:"source_type"` // youtube (default), stream, builtin
+	ProviderID        string `json:"provider_id,omitempty"`
+	ProviderChannelID string `json:"provider_channel_id,omitempty"`
+	SubscriptionID    string `json:"subscription_id,omitempty"`
+	SourceKey         string `json:"source_key,omitempty"`
+	SourceMissing     bool   `json:"source_missing,omitempty"`
+	Group             string `json:"group"`
+	Logo              string `json:"logo"`
+	Enabled           bool   `json:"enabled"`
+	SortOrder         int    `json:"sort_order"`
+	Mode              string `json:"mode"`    // inherit, relay, direct
+	Quality           int    `json:"quality"` // 0 inherits settings
+	Proxy             string `json:"proxy"`   // inherit, direct, or an HTTP(S)/SOCKS5 URL
 }
 
 // BulkChannelRequest adds channels from one URL or "name,URL" per line.
 // New channels are enabled and inherit the global proxy.
 type BulkChannelRequest struct {
-	SourceType string `json:"source_type"`
-	Text       string `json:"text"`
-	Group      string `json:"group"`
-	Mode       string `json:"mode"`
-	Quality    int    `json:"quality"`
+	ProviderID string   `json:"provider_id,omitempty"`
+	ChannelIDs []string `json:"channel_ids,omitempty"`
+	SourceType string   `json:"source_type"`
+	Text       string   `json:"text"`
+	Group      string   `json:"group"`
+	Mode       string   `json:"mode"`
+	Quality    int      `json:"quality"`
 }
 
 type Subscription struct {
@@ -44,8 +48,8 @@ type Subscription struct {
 	Skipped         int       `json:"skipped"`
 }
 
-func (ch Channel) IsStream() bool { return ch.SourceType == "stream" }
-func (ch Channel) IsTVB() bool    { return ch.SourceType == "tvb" }
+func (ch Channel) IsStream() bool  { return ch.SourceType == "stream" }
+func (ch Channel) IsBuiltin() bool { return ch.SourceType == "builtin" }
 
 type BulkChannelItem struct {
 	Line      int    `json:"line"`

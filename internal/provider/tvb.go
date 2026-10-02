@@ -1,4 +1,4 @@
-package media
+package provider
 
 import (
 	"context"
@@ -16,16 +16,17 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"iptv-manager/internal/core"
+	"iptv-manager/internal/source"
 )
-
-var errTVBRevoked = errors.New("TVB 会话已清除，请重新打开频道")
 
 // TVB session state is deliberately kept out of SQLite and configuration
 // backups. Each channel/configuration has its own client and cookie jar.
 type tvbSession struct {
+	owner        *tvbResolver
 	id           uint64
 	family       uint64
 	retryAt      time.Time
@@ -55,6 +56,9 @@ type tvbResolver struct {
 }
 
 func newTVBResolver(factory func(string) (*http.Client, error)) *tvbResolver {
+	if factory == nil {
+		factory = newTVBClient
+	}
 	return &tvbResolver{sessions: make(map[string]*tvbSession), fetches: make(chan struct{}, 2), client: factory, now: time.Now}
 }
 
@@ -62,10 +66,28 @@ func newTVBResolver(factory func(string) (*http.Client, error)) *tvbResolver {
 // Direct connections retain the actual dial-IP guard. Generic URL sources
 // continue to use their separate, more general destination checks.
 func newTVBClient(proxy string) (*http.Client, error) {
-	client, err := newClient(proxy)
-	if err != nil {
-		return nil, err
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	transport := &http.Transport{ForceAttemptHTTP2: true, MaxIdleConns: 16, MaxIdleConnsPerHost: 8, IdleConnTimeout: 60 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 15 * time.Second, MaxResponseHeaderBytes: 64 * 1024, DisableCompression: true}
+	if proxy != "" {
+		p, err := url.Parse(proxy)
+		if err != nil {
+			return nil, errors.New("代理地址无效")
+		}
+		transport.Proxy = http.ProxyURL(p)
+	} else {
+		dialer.ControlContext = func(_ context.Context, _, addr string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				return err
+			}
+			if !source.PublicAddress(net.ParseIP(host)) {
+				return errors.New("上游解析到了非公网地址")
+			}
+			return nil
+		}
 	}
+	transport.DialContext = dialer.DialContext
+	client := &http.Client{Transport: transport, Timeout: 35 * time.Second}
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return errors.New("TVB 重定向过多")
@@ -203,15 +225,14 @@ func (m *tvbResolver) canRefresh(e *tvbSession) bool {
 
 // Resolve joins one in-flight request per channel. No timer or background
 // refresh runs; only playback requests start a bounded API request.
-func (m *tvbResolver) resolve(ctx context.Context, ch core.Channel, settings core.Settings) (*tvbSession, error) {
+func (m *tvbResolver) resolve(ctx context.Context, ch core.Channel, settings core.Settings, config string) (*tvbSession, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	code := core.TVBChannelID(ch.URL)
+	code := tvbChannelID(ch.URL)
 	if code == "" {
 		return nil, errors.New("TVB 仅支持新闻 C 和财经 F 频道")
 	}
-	config := fingerprint(ch, settings)
 	m.mu.Lock()
 	e := m.sessions[ch.ID]
 	var family uint64
@@ -256,7 +277,7 @@ func (m *tvbResolver) resolve(ctx context.Context, ch core.Channel, settings cor
 		}
 		m.serial++
 		lifetime, cancel := context.WithCancel(context.Background())
-		e = &tvbSession{id: m.serial, channel: ch.ID, config: config, code: code, ready: make(chan struct{}), ctx: lifetime, cancel: cancel, jar: newTVBCookieJar(), lastUsed: m.now()}
+		e = &tvbSession{owner: m, id: m.serial, channel: ch.ID, config: config, code: code, ready: make(chan struct{}), ctx: lifetime, cancel: cancel, jar: newTVBCookieJar(), lastUsed: m.now()}
 		e.family = family
 		if family == 0 {
 			e.family = e.id
@@ -273,7 +294,7 @@ func (m *tvbResolver) resolve(ctx context.Context, ch core.Channel, settings cor
 		return nil, ctx.Err()
 	case <-e.ready:
 		if !m.active(e) {
-			return nil, errTVBRevoked
+			return nil, ErrRevoked
 		}
 		return e, e.err
 	}
@@ -395,95 +416,6 @@ func (m *tvbResolver) extract(ctx context.Context, e *tvbSession, proxy string) 
 	return nil
 }
 
-func (s *Server) watchTVB(w http.ResponseWriter, r *http.Request, ch core.Channel, settings core.Settings, mode string) {
-	e, err := s.tvb.resolve(r.Context(), ch, settings)
-	if err != nil {
-		s.reportFailure(ch.ID, err.Error())
-		w.Header().Set("Retry-After", "15")
-		fail(w, 503, err.Error())
-		return
-	}
-	if mode == "direct" {
-		s.reportState(ch.ID, "unknown", "TVB 地址已解析；直连由播放器维护 Cookie，建议使用中继")
-		http.Redirect(w, r, e.root, http.StatusTemporaryRedirect)
-		return
-	}
-	if settings.BaseURL == "" {
-		fail(w, 503, "请先设置服务访问地址")
-		return
-	}
-	ref := resource{URL: e.root, RootURL: e.root, Channel: ch.ID, Fingerprint: fingerprint(ch, settings), Proxy: core.EffectiveProxy(ch, settings), Playlist: true, Refreshable: true, Stream: true, TVB: e}
-	s.serveTVB(w, r, ch, settings, ref, "")
-}
-
-func (s *Server) refreshTVB(ctx context.Context, ch core.Channel, settings core.Settings, ref resource) (resource, error) {
-	e, err := s.tvb.resolve(ctx, ch, settings)
-	if err != nil {
-		return ref, err
-	}
-	updated := ref
-	updated.TVB, updated.URL, updated.RootURL = e, e.root, e.root
-	for _, selector := range ref.Path {
-		body, base, err := s.readManifest(ctx, updated)
-		if err != nil {
-			return ref, err
-		}
-		updated.URL, err = findPlaylist(body, base, selector)
-		if err != nil {
-			return ref, err
-		}
-	}
-	return updated, nil
-}
-
-func (s *Server) serveTVB(w http.ResponseWriter, r *http.Request, ch core.Channel, settings core.Settings, ref resource, referenceID string) {
-	if !s.tvb.canRefresh(ref.TVB) {
-		fail(w, 410, errTVBRevoked.Error())
-		return
-	}
-	if !s.tvb.active(ref.TVB) || ref.TVB.expired(s.tvb.now()) {
-		if !ref.Playlist || !ref.Refreshable {
-			fail(w, 410, "TVB 会话已过期，请重新读取直播清单")
-			return
-		}
-		updated, err := s.refreshTVB(r.Context(), ch, settings, ref)
-		if err != nil {
-			s.reportFailure(ch.ID, err.Error())
-			fail(w, 502, "TVB 来源刷新失败，请稍后重试或刷新来源")
-			return
-		}
-		ref = updated
-	}
-	for attempt := 0; attempt < 2; attempt++ {
-		if referenceID != "" {
-			s.saveReference(referenceID, ref)
-		}
-		status, err := s.serve(w, r, ref, settings, ref.Playlist)
-		if err == nil {
-			return
-		}
-		if (status == 401 || status == 403) && s.tvb.active(ref.TVB) {
-			ref.TVB.stale.Store(true)
-			// Only a fresh playlist can safely renew the semantic path. Never
-			// substitute an old encrypted segment/key using a new session.
-			if attempt == 0 && ref.Playlist && ref.Refreshable {
-				updated, refreshErr := s.refreshTVB(r.Context(), ch, settings, ref)
-				if refreshErr == nil {
-					ref = updated
-					continue
-				}
-			}
-		}
-		if errors.Is(err, errTVBRevoked) {
-			fail(w, 410, err.Error())
-			return
-		}
-		s.reportFailure(ch.ID, "TVB 媒体暂不可用，请重新打开频道或刷新来源")
-		fail(w, 502, "TVB 媒体暂不可用，请重新打开频道或刷新来源")
-		return
-	}
-}
-
 type tvbResponseBody struct {
 	io.ReadCloser
 	stop   func() bool
@@ -497,39 +429,39 @@ func (b *tvbResponseBody) Close() error {
 	return err
 }
 
-func (s *Server) fetchTVB(ctx context.Context, ref resource, rangeHeader string) (*http.Response, error) {
-	if !s.tvb.active(ref.TVB) {
-		return nil, errTVBRevoked
+func (e *tvbSession) Fetch(ctx context.Context, raw string, rangeHeader string) (*http.Response, error) {
+	if !e.Active() {
+		return nil, ErrRevoked
 	}
-	if err := validateTVBURL(ref.URL); err != nil {
+	if err := validateTVBURL(raw); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	stop := context.AfterFunc(ref.TVB.ctx, cancel)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ref.URL, nil)
+	stop := context.AfterFunc(e.ctx, cancel)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		stop()
 		cancel()
 		return nil, errors.New("TVB 资源请求无效")
 	}
-	tvbHeaders(req, ref.TVB.code)
+	tvbHeaders(req, e.code)
 	if rangeHeader != "" {
 		req.Header.Set("Range", rangeHeader)
 	}
-	resp, err := tvbMediaRequest(ref.TVB.client, req, ref.Channel)
+	resp, err := tvbMediaRequest(e.client, req, e.channel)
 	if err != nil {
 		stop()
 		cancel()
-		if !s.tvb.active(ref.TVB) {
-			return nil, errTVBRevoked
+		if !e.Active() {
+			return nil, ErrRevoked
 		}
-		slog.Warn("TVB 媒体请求失败", "channel", ref.Channel, "host", req.URL.Hostname(), "reason", tvbNetworkReason(err))
+		slog.Warn("TVB 媒体请求失败", "channel", e.channel, "host", req.URL.Hostname(), "reason", tvbNetworkReason(err))
 		return nil, errors.New("TVB 媒体请求失败，请检查出口和网络")
 	}
 	resp.Body = &tvbResponseBody{ReadCloser: resp.Body, stop: stop, cancel: cancel}
-	for _, cookie := range ref.TVB.jar.Cookies(req.URL) {
-		if cookie.Name == "hdntl" && ref.TVB.cookieLogged.CompareAndSwap(false, true) {
-			slog.Info("TVB Cookie 会话已建立", "channel", ref.Channel, "tvb_channel", ref.TVB.code)
+	for _, cookie := range e.jar.Cookies(req.URL) {
+		if cookie.Name == "hdntl" && e.cookieLogged.CompareAndSwap(false, true) {
+			slog.Info("TVB Cookie 会话已建立", "channel", e.channel, "tvb_channel", e.code)
 		}
 	}
 	return resp, nil
@@ -582,9 +514,62 @@ func tvbNetworkReason(err error) string {
 	return "network_error"
 }
 
-func tvbSessionID(ref resource) string {
-	if ref.TVB == nil {
+func (m *tvbResolver) Resolve(ctx context.Context, ch core.Channel, settings core.Settings, config string) (Playback, error) {
+	e, err := m.resolve(ctx, ch, settings, config)
+	if err != nil {
+		return Playback{}, err
+	}
+	return Playback{URL: e.root, Session: e}, nil
+}
+func (m *tvbResolver) Invalidate(id string)        { m.invalidate(id) }
+func (e *tvbSession) ID() string                   { return strconv.FormatUint(e.id, 10) }
+func (e *tvbSession) URL() string                  { return e.root }
+func (e *tvbSession) Active() bool                 { return e.owner.active(e) }
+func (e *tvbSession) CanRefresh() bool             { return e.owner.canRefresh(e) }
+func (e *tvbSession) Expired() bool                { return e.expired(e.owner.now()) }
+func (e *tvbSession) Reject()                      { e.stale.Store(true) }
+func (e *tvbSession) ValidateURL(raw string) error { return validateTVBURL(raw) }
+
+// tvbChannelID accepts only the two supported public TVB news pages.
+func tvbChannelID(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "news.tvb.com") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" {
 		return ""
 	}
-	return strconv.FormatUint(ref.TVB.id, 10)
+	parts := strings.Split(strings.TrimSuffix(u.Path, "/"), "/")
+	if len(parts) != 4 || (parts[1] != "tc" && parts[1] != "sc" && parts[1] != "en") || parts[2] != "live" || (parts[3] != "C" && parts[3] != "F") {
+		return ""
+	}
+	return parts[3]
+}
+
+func tvbDefinition() definition {
+	return definition{catalog: Catalog{
+		ID:           "tvb",
+		Name:         "无线新闻",
+		Website:      "https://news.tvb.com/tc/live/C",
+		Description:  "无线新闻、无线财经。播放时按需获取来源和 Cookie，过期后由下次播放请求更新；刷新来源可清除会话缓存。推荐服务器中继。",
+		SourceType:   "builtin",
+		DefaultMode:  "relay",
+		LinkLabel:    "官网直播 ↗",
+		PlaybackHelp: "推荐中继；直连需要播放器维护 Cookie，并且客户端能访问来源。",
+		Channels: []Channel{
+			{ID: "C", Name: "无线新闻", URL: "https://news.tvb.com/tc/live/C", Selected: true, Note: "TVB 新闻 C 频道"},
+			{ID: "F", Name: "无线财经", URL: "https://news.tvb.com/tc/live/F", Selected: true, Note: "TVB 财经 F 频道"},
+		},
+	},
+		matchLegacy: func(kind, raw string) string {
+			if kind == "tvb" {
+				return tvbChannelID(raw)
+			}
+			return ""
+		},
+		create: func(opts Options) resolver {
+			m := newTVBResolver(opts.ClientFactory)
+			if opts.Now != nil {
+				m.now = opts.Now
+			}
+			return m
+		},
+	}
 }
