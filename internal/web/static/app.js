@@ -42,6 +42,7 @@ async function loadState({ background = false } = {}) {
   $('#app').hidden = false;
   renderChannels();
   renderStats();
+  renderSubscriptions();
   $('#version').textContent = next.version ? `v${next.version.replace(/^v/, '')}` : '';
   if (!background) fillSettings();
 }
@@ -49,7 +50,7 @@ function renderStats() {
   const channels = state.channels || [];
   $('#total-count').textContent = channels.length;
   $('#table-count').textContent = channels.length;
-  $('#enabled-count').textContent = `${channels.filter(c => c.enabled).length} 个启用 · ${channels.filter(c => !c.enabled).length} 个停用`;
+  $('#enabled-count').textContent = `${channels.filter(c => c.enabled && !c.source_missing).length} 个启用 · ${channels.filter(c => !c.enabled || c.source_missing).length} 个停用 / 失效`;
   const gb = Math.max(0, state.traffic?.bytes || 0) / 1e9;
   $('#traffic-value').textContent = gb.toFixed(2);
   $('#budget-value').textContent = state.settings.monthly_budget_gb;
@@ -107,19 +108,20 @@ function renderChannels() {
     const identity = node('div');
     const name = node('div', 'channel-name', ch.name);
     name.title = ch.name;
-    identity.append(name, node('div', 'channel-meta', ch.group || '未分组'));
+    const sourceName = ch.subscription_id ? `M3U · ${state.subscriptions?.find(s => s.id === ch.subscription_id)?.name || '订阅'}` : ch.source_type === 'stream' ? '通用直播' : 'YouTube';
+    identity.append(name, node('div', 'channel-meta', `${ch.group || '未分组'} · ${sourceName}`));
     cell.append(logo, identity);
     channel.append(cell);
     const mode = node('td');
     const effectiveMode = ch.mode === 'inherit' ? state.settings.default_mode : ch.mode;
     mode.append(node('span', 'badge', effectiveMode === 'direct' ? '客户端直连' : '服务器中继'));
     if (ch.mode === 'inherit') mode.append(node('div', 'channel-meta', '继承全局'));
-    const quality = node('td', '', `${ch.quality || state.settings.default_quality}p`);
-    if (!ch.quality) quality.append(node('div', 'channel-meta', '继承全局'));
+    const quality = node('td', '', ch.source_type === 'stream' ? '原始画质' : `${ch.quality || state.settings.default_quality}p`);
+    if (!ch.quality && ch.source_type !== 'stream') quality.append(node('div', 'channel-meta', '继承全局'));
     const source = node('td');
     const status = state.statuses?.[ch.id];
-    const kind = !ch.enabled ? 'disabled' : status?.state || 'unknown';
-    const labels = { unknown: '未检测', resolving: '解析中', ready: '来源就绪', offline: '未开播', error: '获取失败', disabled: '已停用' };
+    const kind = ch.source_missing ? 'missing' : !ch.enabled ? 'disabled' : status?.state || 'unknown';
+    const labels = { unknown: '未检测', resolving: '解析中', ready: '来源就绪', offline: '未开播', error: '获取失败', disabled: '已停用', missing: '订阅已无此源' };
     const badge = node('span', `badge status-${Object.hasOwn(labels, kind) ? kind : 'unknown'}`);
     badge.append(node('span', 'status-dot'), document.createTextNode(labels[kind] || '未检测'));
     source.append(badge);
@@ -142,7 +144,8 @@ function renderChannels() {
       const result = await api(`/channels/${encodeURIComponent(ch.id)}/refresh`, { method: 'POST' });
       await loadState({ background: true });
       toast(result.message);
-    }), action('删除', `删除 ${ch.name}`, async () => {
+    }));
+    if (!ch.subscription_id) buttons.append(action('删除', `删除 ${ch.name}`, async () => {
       if (!confirm(`删除频道「${ch.name}」？此频道的固定播放地址将失效。`)) return;
       await api(`/channels/${encodeURIComponent(ch.id)}`, { method: 'DELETE' });
       await loadState({ background: true });
@@ -164,10 +167,63 @@ function editChannel(channel) {
   form.reset();
   $('#channel-error').textContent = '';
   $('#channel-dialog-title').textContent = channel ? '编辑频道' : '添加频道';
-  const data = channel || { id: '', name: '', url: '', group: '', logo: '', enabled: true, mode: 'inherit', quality: 0, proxy: 'inherit', sort_order: state.channels?.length || 0 };
+  const data = channel || { id: '', source_type: 'stream', name: '', url: '', group: '', logo: '', enabled: true, mode: 'inherit', quality: 0, proxy: 'inherit', sort_order: state.channels?.length || 0 };
   Object.entries(data).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
+  const managed = !!channel?.subscription_id;
+  ['name', 'url', 'group', 'logo'].forEach(key => { form.elements.namedItem(key).readOnly = managed; });
+  $('#channel-type').disabled = managed;
+  $('#channel-managed').hidden = !managed;
+  updateSourceFields('channel');
   $('details', form).open = false;
   $('#channel-dialog').showModal();
+}
+function updateSourceFields(prefix) {
+  const stream = $(`#${prefix}-type`).value === 'stream';
+  $(`#${prefix}-quality-field`).hidden = stream;
+  if (stream) $(`#${prefix}-quality`).value = '0';
+  if (prefix === 'channel') {
+    $('#channel-url').placeholder = stream ? 'https://example.com/live.m3u8' : 'https://www.youtube.com/watch?v=…';
+    $('#channel-source-help').textContent = stream ? '支持公网 HTTP/HTTPS HLS 和媒体直播地址。直连由播放器连接原始来源，中继由服务器转发。' : '通过 yt-dlp 按需解析 YouTube 直播；支持 watch?v=… 和 youtu.be/… 链接。';
+  } else {
+    $('#bulk-text').placeholder = stream ? '新闻频道,https://example.com/live.m3u8\nhttps://example.com/channel.ts' : '中天新闻,https://www.youtube.com/watch?v=vr3XyVCR4T0\nhttps://youtu.be/V1p33hqPrUk';
+  }
+}
+['channel', 'bulk'].forEach(prefix => $(`#${prefix}-type`).addEventListener('change', () => updateSourceFields(prefix)));
+function editSubscription(sub) {
+  const form = $('#subscription-form');
+  form.reset();
+  const data = sub || { id: '', name: '', url: '', proxy: 'inherit', interval_minutes: 60, enabled: true };
+  Object.entries(data).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
+  $('#subscription-error').textContent = '';
+  $('#subscription-dialog-title').textContent = sub ? '编辑 M3U 订阅' : '添加 M3U 订阅';
+  $('#subscription-dialog').showModal();
+}
+function renderSubscriptions() {
+  const list = $('#subscription-list');
+  list.replaceChildren();
+  const subs = state.subscriptions || [];
+  $('#subscriptions-empty').hidden = subs.length !== 0;
+  const time = value => !value || value.startsWith('0001-') ? '尚未同步' : new Date(value).toLocaleString();
+  subs.forEach(sub => {
+    const card = node('article', 'panel settings-card');
+    const channels = state.channels.filter(ch => ch.subscription_id === sub.id);
+    card.append(node('h2', '', sub.name));
+    card.append(node('p', 'muted', `${new URL(sub.url).host} · ${channels.filter(ch => !ch.source_missing).length} 个来源有效 · ${channels.filter(ch => ch.source_missing).length} 个失效`));
+    card.append(node('p', 'field-help', `${sub.enabled ? `每 ${sub.interval_minutes} 分钟自动更新` : '自动更新已暂停'} · 最近成功：${time(sub.last_sync)}`));
+    if (sub.last_error) card.append(node('p', 'error', `同步失败：${sub.last_error}`));
+    if (sub.skipped) card.append(node('p', 'field-help', `最近一次同步跳过 ${sub.skipped} 个重复、不支持或无效的条目`));
+    const buttons = node('div', 'subscription-buttons');
+    buttons.append(action('编辑订阅', `编辑订阅 ${sub.name}`, () => editSubscription(sub)), action('立即同步', `立即同步 ${sub.name}`, async () => {
+      buttons.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      try { await api(`/subscriptions/${encodeURIComponent(sub.id)}/sync`, { method: 'POST' }); toast('订阅同步完成'); }
+      finally { await loadState({ background: true }); buttons.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
+    }), action('删除订阅', `删除订阅 ${sub.name}`, async () => {
+      if (!confirm(`删除订阅「${sub.name}」及其 ${channels.length} 个频道？对应的播放地址将失效。`)) return;
+      await api(`/subscriptions/${encodeURIComponent(sub.id)}`, { method: 'DELETE' });
+      await loadState({ background: true }); toast('订阅及关联频道已删除');
+    }, 'quiet danger'));
+    card.append(buttons); list.append(card);
+  });
 }
 function fillSettings() {
   const form = $('#settings-form');
@@ -246,6 +302,7 @@ $('#bulk-add').addEventListener('click', () => {
   $('#bulk-results').hidden = true;
   $('#bulk-result-list').replaceChildren();
   updateBulkCount();
+  updateSourceFields('bulk');
   $('#bulk-dialog').showModal();
   $('#bulk-text').focus();
 });
@@ -281,12 +338,14 @@ $$('[data-view]').forEach(button => button.addEventListener('click', () => {
   $$('[data-view]').forEach(b => b.classList.toggle('active', b === button));
   $('#view-channels').hidden = button.dataset.view !== 'channels';
   $('#view-settings').hidden = button.dataset.view !== 'settings';
+  $('#view-subscriptions').hidden = button.dataset.view !== 'subscriptions';
 }));
 $$('.close-dialog').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
 $$('[data-subscription]').forEach(button => button.addEventListener('click', () => copySubscription(button.dataset.subscription)));
 $('#channel-form').addEventListener('submit', async event => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.currentTarget));
+  let data = Object.fromEntries(new FormData(event.currentTarget));
+  data = { ...state.channels.find(ch => ch.id === data.id), ...data };
   data.enabled = data.enabled === 'true';
   data.quality = Number(data.quality);
   data.sort_order = Number(data.sort_order);
@@ -300,6 +359,27 @@ $('#channel-form').addEventListener('submit', async event => {
     await loadState({ background: true });
     toast('频道已保存');
   } catch (error) { $('#channel-error').textContent = error.message; }
+  finally { button.disabled = false; }
+});
+$('#add-subscription').addEventListener('click', () => editSubscription());
+$('#subscription-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.currentTarget));
+  data.interval_minutes = Number(data.interval_minutes);
+  data.enabled = data.enabled === 'true';
+  data.proxy = data.proxy.trim() || 'inherit';
+  const button = $('button[type="submit"]', event.currentTarget);
+  button.disabled = true; $('#subscription-error').textContent = '';
+  try {
+    const saved = await api(data.id ? `/subscriptions/${encodeURIComponent(data.id)}` : '/subscriptions', {method: data.id ? 'PUT' : 'POST', body: data});
+    $('#subscription-dialog').close();
+    await loadState({background:true});
+    toast('订阅已保存，正在获取频道列表…');
+    await perform(async () => {
+      try { await api(`/subscriptions/${encodeURIComponent(saved.id)}/sync`, {method:'POST'}); toast('订阅同步完成'); }
+      finally { await loadState({background:true}); }
+    });
+  } catch (error) { if ($('#subscription-dialog').open) $('#subscription-error').textContent = error.message; else toast(error.message,true); }
   finally { button.disabled = false; }
 });
 $('#settings-form').addEventListener('submit', async event => {
@@ -339,7 +419,7 @@ $('#backup').addEventListener('click', () => perform(async () => {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `youtube-tv-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.download = `iptv-manager-${new Date().toISOString().slice(0, 10)}.json`;
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
@@ -350,8 +430,8 @@ $('#restore-file').addEventListener('change', event => perform(async () => {
   const file = event.target.files[0];
   event.target.value = '';
   if (!file) return;
-  if (file.size > 1024 * 1024) throw new Error('备份文件不能超过 1 MB');
-  if (!confirm('导入会替换当前频道、设置和播放令牌（不修改管理密码）。请确认文件来自可信来源。继续？')) return;
+  if (file.size > 32 * 1024 * 1024) throw new Error('备份文件不能超过 32 MB');
+  if (!confirm('导入会替换当前频道、M3U 订阅、设置和播放令牌（不修改管理密码）。请确认文件来自可信来源。继续？')) return;
   let data;
   try { data = JSON.parse(await file.text()); } catch { throw new Error('文件不是有效的 JSON 备份'); }
   await api('/restore', { method: 'POST', body: data });

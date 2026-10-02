@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"youtube-tv/internal/core"
-	"youtube-tv/internal/resolver"
+	"iptv-manager/internal/core"
+	"iptv-manager/internal/resolver"
 )
 
 type refreshRepo struct {

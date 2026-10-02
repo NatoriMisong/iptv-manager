@@ -4,26 +4,47 @@ import "time"
 
 // Channel IDs are permanent; SortOrder is independent of the playback URL.
 type Channel struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	URL       string `json:"url"`
-	Group     string `json:"group"`
-	Logo      string `json:"logo"`
-	Enabled   bool   `json:"enabled"`
-	SortOrder int    `json:"sort_order"`
-	Mode      string `json:"mode"`    // inherit, relay, direct
-	Quality   int    `json:"quality"` // 0 inherits settings
-	Proxy     string `json:"proxy"`   // inherit, direct, or an HTTP(S)/SOCKS5 URL
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	URL            string `json:"url"`
+	SourceType     string `json:"source_type"` // youtube (default), stream
+	SubscriptionID string `json:"subscription_id,omitempty"`
+	SourceKey      string `json:"source_key,omitempty"`
+	SourceMissing  bool   `json:"source_missing,omitempty"`
+	Group          string `json:"group"`
+	Logo           string `json:"logo"`
+	Enabled        bool   `json:"enabled"`
+	SortOrder      int    `json:"sort_order"`
+	Mode           string `json:"mode"`    // inherit, relay, direct
+	Quality        int    `json:"quality"` // 0 inherits settings
+	Proxy          string `json:"proxy"`   // inherit, direct, or an HTTP(S)/SOCKS5 URL
 }
 
 // BulkChannelRequest adds channels from one URL or "name,URL" per line.
 // New channels are enabled and inherit the global proxy.
 type BulkChannelRequest struct {
-	Text    string `json:"text"`
-	Group   string `json:"group"`
-	Mode    string `json:"mode"`
-	Quality int    `json:"quality"`
+	SourceType string `json:"source_type"`
+	Text       string `json:"text"`
+	Group      string `json:"group"`
+	Mode       string `json:"mode"`
+	Quality    int    `json:"quality"`
 }
+
+type Subscription struct {
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	URL             string    `json:"url"`
+	Proxy           string    `json:"proxy"`
+	IntervalMinutes int       `json:"interval_minutes"`
+	Enabled         bool      `json:"enabled"`
+	Revision        int       `json:"revision"`
+	LastAttempt     time.Time `json:"last_attempt"`
+	LastSync        time.Time `json:"last_sync"`
+	LastError       string    `json:"last_error"`
+	Skipped         int       `json:"skipped"`
+}
+
+func (ch Channel) IsStream() bool { return ch.SourceType == "stream" }
 
 type BulkChannelItem struct {
 	Line      int    `json:"line"`
@@ -51,9 +72,10 @@ type Settings struct {
 }
 
 type Backup struct {
-	Version  int       `json:"version"`
-	Settings Settings  `json:"settings"`
-	Channels []Channel `json:"channels"`
+	Version       int            `json:"version"`
+	Settings      Settings       `json:"settings"`
+	Channels      []Channel      `json:"channels"`
+	Subscriptions []Subscription `json:"subscriptions,omitempty"`
 }
 
 type ChannelStatus struct {

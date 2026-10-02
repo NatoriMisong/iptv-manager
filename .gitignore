@@ -1,6 +1,6 @@
 /data/
 /.env
-/youtube-tv
+/iptv-manager
 /dist/
 *.db
 *.db-wal
@@ -9,5 +9,8 @@ coverage.out
 /.agents/
 /.codex/
 cookies*.txt
-/youtube-tv-????-??-??.json
+/iptv-manager-????-??-??.json
 /local-test/
+# Legacy names remain private when upgrading an existing checkout.
+/youtube-tv
+/youtube-tv-????-??-??.json

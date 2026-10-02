@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"youtube-tv/internal/core"
+	"iptv-manager/internal/core"
 )
 
 var (
@@ -352,7 +352,7 @@ func copyCookiesFile(path string) (string, error) {
 		return "", errors.New("无法读取 Cookies 文件，请检查路径和权限")
 	}
 	defer source.Close()
-	temporary, err := os.CreateTemp("", "youtube-tv-cookies-*")
+	temporary, err := os.CreateTemp("", "iptv-manager-cookies-*")
 	if err != nil {
 		return "", errors.New("无法创建 Cookies 临时副本，请检查临时目录权限")
 	}

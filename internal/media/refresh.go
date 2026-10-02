@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"time"
 
-	"youtube-tv/internal/core"
+	"iptv-manager/internal/core"
 )
 
 func expiredStatus(status int) bool {

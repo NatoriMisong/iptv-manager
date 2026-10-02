@@ -21,8 +21,9 @@ import (
 	"sync"
 	"time"
 
-	"youtube-tv/internal/core"
-	"youtube-tv/internal/resolver"
+	"iptv-manager/internal/core"
+	"iptv-manager/internal/resolver"
+	"iptv-manager/internal/source"
 )
 
 type Repository interface {
@@ -40,8 +41,10 @@ type Options struct {
 	MaxFetches   int
 	MaxResources int
 	// Injection points for local integration tests. Production uses the guarded client.
-	ClientFactory func(string) (*http.Client, error)
-	ValidateURL   func(string) error
+	ClientFactory       func(string) (*http.Client, error)
+	ValidateURL         func(string) error
+	StreamClientFactory func(string) (*http.Client, error)
+	ValidateStreamURL   func(string) error
 }
 type resource struct {
 	URL         string
@@ -58,6 +61,8 @@ type resource struct {
 	VideoURL    string
 	Height      int
 	Direct      bool
+	Stream      bool
+	StreamRoot  bool
 }
 type Server struct {
 	repo      Repository
@@ -88,6 +93,12 @@ func New(repo Repository, res Resolver, opts Options) *Server {
 	if opts.ValidateURL == nil {
 		opts.ValidateURL = ValidateUpstream
 	}
+	if opts.StreamClientFactory == nil {
+		opts.StreamClientFactory = source.NewClient
+	}
+	if opts.ValidateStreamURL == nil {
+		opts.ValidateStreamURL = source.ValidateURL
+	}
 	return &Server{repo: repo, resolver: res, options: opts, cache: newSegmentCache(opts.CacheBytes), resources: make(map[string]resource), failures: make(map[string]core.ChannelStatus), clients: make(map[string]*http.Client), flights: make(map[string]chan struct{}), fetches: make(chan struct{}, opts.MaxFetches), refreshes: make(chan struct{}, 1), pending: make(map[string]int64)}
 }
 
@@ -105,6 +116,7 @@ func fail(w http.ResponseWriter, status int, message string) {
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (core.Settings, bool) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	settings, err := s.repo.Settings(r.Context())
 	if err != nil {
 		fail(w, 503, "配置暂不可用")
@@ -143,7 +155,7 @@ func (s *Server) playlist(w http.ResponseWriter, r *http.Request) {
 	var body strings.Builder
 	body.WriteString("#EXTM3U\n")
 	for _, ch := range channels {
-		if !ch.Enabled {
+		if !ch.Enabled || ch.SourceMissing {
 			continue
 		}
 		fmt.Fprintf(&body, "#EXTINF:-1 tvg-id=\"%s\" tvg-name=\"%s\" group-title=\"%s\" tvg-logo=\"%s\",%s\n", ch.ID, ch.Name, ch.Group, ch.Logo, ch.Name)
@@ -152,11 +164,11 @@ func (s *Server) playlist(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Disposition", `inline; filename="youtube-tv.m3u"`)
+	w.Header().Set("Content-Disposition", `inline; filename="iptv-manager.m3u"`)
 	io.WriteString(w, body.String())
 }
 func fingerprint(ch core.Channel, settings core.Settings) string {
-	b, _ := json.Marshal([]any{ch.URL, ch.Quality, settings.DefaultQuality, core.EffectiveProxy(ch, settings)})
+	b, _ := json.Marshal([]any{ch.URL, ch.SourceType, ch.Quality, settings.DefaultQuality, core.EffectiveProxy(ch, settings)})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
@@ -166,7 +178,7 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ch, err := s.repo.Channel(r.Context(), r.PathValue("id"))
-	if err != nil || !ch.Enabled {
+	if err != nil || !ch.Enabled || ch.SourceMissing {
 		fail(w, 404, "频道不存在或已停用")
 		return
 	}
@@ -181,18 +193,24 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "播放模式无效")
 		return
 	}
-	res, err := s.resolver.Resolve(r.Context(), ch, settings)
+	res := resolver.Result{URL: ch.URL}
+	if !ch.IsStream() {
+		res, err = s.resolver.Resolve(r.Context(), ch, settings)
+	}
 	if err != nil {
 		w.Header().Set("Retry-After", "15")
 		fail(w, 503, err.Error())
 		return
 	}
-	if err = s.options.ValidateURL(res.URL); err != nil {
-		fail(w, 502, "解析器返回了不允许的上游地址")
+	if err = s.validate(res.URL, ch.IsStream()); err != nil {
+		fail(w, 502, "来源地址不被允许")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	if mode == "direct" && res.VideoURL == "" {
+		if ch.IsStream() {
+			s.reportState(ch.ID, "unknown", "客户端直连，服务器未检测可播性")
+		}
 		http.Redirect(w, r, res.URL, http.StatusTemporaryRedirect)
 		return
 	}
@@ -200,13 +218,13 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, "请先设置服务访问地址")
 		return
 	}
-	ref := resource{URL: res.URL, Channel: ch.ID, Fingerprint: fingerprint(ch, settings), Proxy: core.EffectiveProxy(ch, settings), Headers: res.Headers, Playlist: true, Refreshable: true, RootURL: res.URL, RootExpires: res.ExpiresAt, VideoURL: res.VideoURL, Height: res.Height, Direct: mode == "direct"}
+	ref := resource{URL: res.URL, Channel: ch.ID, Fingerprint: fingerprint(ch, settings), Proxy: core.EffectiveProxy(ch, settings), Headers: res.Headers, Playlist: !ch.IsStream(), Refreshable: !ch.IsStream(), RootURL: res.URL, RootExpires: res.ExpiresAt, VideoURL: res.VideoURL, Height: res.Height, Direct: mode == "direct", Stream: ch.IsStream(), StreamRoot: ch.IsStream()}
 	for attempt := 0; attempt < 2; attempt++ {
-		status, err := s.serve(w, r, ref, settings, true)
+		status, err := s.serve(w, r, ref, settings, !ch.IsStream())
 		if err == nil {
 			return
 		}
-		if attempt == 0 && (status == 401 || status == 403 || status == 410 || status == 404) {
+		if !ch.IsStream() && attempt == 0 && expiredStatus(status) {
 			ref, err = s.refreshPlaylist(r.Context(), ch, settings, ref, true)
 			if err != nil {
 				fail(w, 503, err.Error())
@@ -219,7 +237,7 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *Server) reference(ref resource, settings core.Settings) (string, error) {
-	if err := s.options.ValidateURL(ref.URL); err != nil {
+	if err := s.validate(ref.URL, ref.Stream); err != nil {
 		return "", err
 	}
 	b, _ := json.Marshal([]any{ref.URL, ref.Channel, ref.Fingerprint, ref.Headers, ref.Path, ref.VideoURL, ref.Height})
@@ -264,7 +282,7 @@ func (s *Server) media(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ch, err := s.repo.Channel(r.Context(), ref.Channel)
-	if err != nil || !ch.Enabled || ref.Fingerprint != fingerprint(ch, settings) {
+	if err != nil || !ch.Enabled || ch.SourceMissing || ref.Fingerprint != fingerprint(ch, settings) {
 		fail(w, 410, "频道配置已更新，请重新打开频道")
 		return
 	}
@@ -285,7 +303,7 @@ func (s *Server) media(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		if expiredStatus(status) && !ref.Playlist {
+		if expiredStatus(status) && !ref.Playlist && !ref.Stream {
 			s.resolver.Invalidate(ch.ID)
 		}
 		if status == 503 {
@@ -296,13 +314,24 @@ func (s *Server) media(w http.ResponseWriter, r *http.Request) {
 		fail(w, status, "媒体资源暂不可用，请重新打开频道")
 	}
 }
-func (s *Server) client(proxy string) (*http.Client, error) {
+func (s *Server) validate(raw string, stream bool) error {
+	if stream {
+		return s.options.ValidateStreamURL(raw)
+	}
+	return s.options.ValidateURL(raw)
+}
+func (s *Server) client(proxy string, stream bool) (*http.Client, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if c, ok := s.clients[proxy]; ok {
+	key := fmt.Sprintf("%t:%s", stream, proxy)
+	if c, ok := s.clients[key]; ok {
 		return c, nil
 	}
-	c, err := s.options.ClientFactory(proxy)
+	factory := s.options.ClientFactory
+	if stream {
+		factory = s.options.StreamClientFactory
+	}
+	c, err := factory(proxy)
 	if err != nil {
 		return nil, err
 	}
@@ -312,19 +341,29 @@ func (s *Server) client(proxy string) (*http.Client, error) {
 			delete(s.clients, k)
 		}
 	}
-	s.clients[proxy] = c
+	s.clients[key] = c
 	return c, nil
 }
 func (s *Server) fetch(ctx context.Context, ref resource, rangeHeader string) (*http.Response, error) {
-	if err := s.options.ValidateURL(ref.URL); err != nil {
+	if err := s.validate(ref.URL, ref.Stream); err != nil {
 		return nil, err
 	}
-	c, err := s.client(ref.Proxy)
+	c, err := s.client(ref.Proxy, ref.Stream)
 	if err != nil {
 		return nil, err
+	}
+	var cancel context.CancelFunc
+	if ref.StreamRoot {
+		ctx, cancel = context.WithCancel(ctx)
+		copy := *c
+		copy.Timeout = 0
+		c = &copy
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ref.URL, nil)
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		return nil, err
 	}
 	for k, v := range ref.Headers {
@@ -337,6 +376,13 @@ func (s *Server) fetch(ctx context.Context, ref resource, rangeHeader string) (*
 		req.Header.Set("Range", rangeHeader)
 	}
 	resp, err := c.Do(req)
+	if cancel != nil {
+		if err != nil {
+			cancel()
+		} else {
+			resp.Body = &idleBody{ReadCloser: resp.Body, cancel: cancel, timer: time.AfterFunc(35*time.Second, cancel)}
+		}
+	}
 	if err != nil {
 		reason := "network_error"
 		var networkErr net.Error
@@ -355,6 +401,22 @@ func (s *Server) fetch(ctx context.Context, ref resource, rangeHeader string) (*
 	}
 	return resp, err
 }
+
+// Continuous HTTP streams have no total lifetime limit; a stalled read is bounded.
+type idleBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+	timer  *time.Timer
+}
+
+func (b *idleBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.timer.Reset(35 * time.Second)
+	}
+	return n, err
+}
+func (b *idleBody) Close() error { b.timer.Stop(); b.cancel(); return b.ReadCloser.Close() }
 func (s *Server) begin(key string) (chan struct{}, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -387,7 +449,7 @@ func segmentHeaders(h http.Header) http.Header {
 }
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, ref resource, settings core.Settings, requireManifest bool) (int, error) {
 	key := ref.Fingerprint + "\x00" + ref.Channel + "\x00" + ref.URL + "\x00" + r.Header.Get("Range")
-	if !requireManifest {
+	if !requireManifest && !ref.Playlist && !ref.StreamRoot {
 		for {
 			if cached, ok := s.cache.get(key); ok {
 				for k, v := range cached.header {
@@ -433,7 +495,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, ref resource, set
 		return resp.StatusCode, errors.New("upstream failure")
 	}
 	reader := bufio.NewReaderSize(resp.Body, 4096)
-	prefix, _ := reader.Peek(7)
+	prefix, _ := reader.Peek(10)
+	prefix = bytes.TrimSpace(bytes.TrimPrefix(prefix, []byte("\ufeff")))
 	isManifest := requireManifest || bytes.HasPrefix(prefix, []byte("#EXTM3U")) || strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "mpegurl")
 	if isManifest {
 		body, err := io.ReadAll(io.LimitReader(reader, 2*1024*1024+1))
@@ -450,13 +513,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, ref resource, set
 		}
 		body, err = rewriteHLSLinks(body, base, func(link playlistLink) (string, error) {
 			if ref.Direct {
-				if err := s.options.ValidateURL(link.URL); err != nil {
+				if err := s.validate(link.URL, ref.Stream); err != nil {
 					return "", err
 				}
 				return link.URL, nil
 			}
 			next := ref
 			next.URL = link.URL
+			next.StreamRoot = false
 			next.Playlist = link.Playlist
 			next.Refreshable = ref.Refreshable && link.Playlist && link.Selector != "" && len(ref.Path) < 8
 			if next.Refreshable {
@@ -467,7 +531,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, ref resource, set
 			return s.reference(next, settings)
 		})
 		if err != nil {
+			if ref.Stream {
+				s.reportFailure(ref.Channel, "清单包含无效或不允许的资源地址")
+			}
 			return 502, err
+		}
+		if ref.Stream {
+			s.reportState(ref.Channel, "ready", "直播清单可用，实际播放由播放器确认")
 		}
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
@@ -478,7 +548,17 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, ref resource, set
 		}
 		return 200, nil
 	}
+	if ref.StreamRoot && (strings.HasPrefix(resp.Header.Get("Content-Type"), "text/") || strings.Contains(resp.Header.Get("Content-Type"), "json")) {
+		s.reportFailure(ref.Channel, "来源返回了网页或文本，未发现直播媒体")
+		return 502, errors.New("not a media response")
+	}
 	h := segmentHeaders(resp.Header)
+	if ref.Stream {
+		kind := strings.ToLower(strings.Split(h.Get("Content-Type"), ";")[0])
+		if !strings.HasPrefix(kind, "video/") && !strings.HasPrefix(kind, "audio/") && kind != "application/mp4" {
+			h.Set("Content-Type", "application/octet-stream")
+		}
+	}
 	for k, v := range h {
 		w.Header()[k] = v
 	}
@@ -490,17 +570,28 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, ref resource, set
 	// At most 4 MiB are captured per in-flight request; larger segments continue
 	// streaming without being cached. The completed cache has a separate cap.
 	var capture bytes.Buffer
-	cacheable := s.options.CacheBytes > 0 && (resp.ContentLength < 0 || resp.ContentLength <= 4*1024*1024)
+	cacheable := !ref.StreamRoot && s.options.CacheBytes > 0 && (resp.ContentLength < 0 || resp.ContentLength <= 4*1024*1024)
 	buffer := make([]byte, 32*1024)
 	var total int64
 	for {
 		n, readErr := reader.Read(buffer)
 		if n > 0 {
+			if ref.StreamRoot {
+				_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(35 * time.Second))
+			}
 			written, writeErr := w.Write(buffer[:n])
 			total += int64(written)
 			if writeErr != nil || written != n {
 				s.count(total)
 				return resp.StatusCode, nil
+			}
+			if ref.StreamRoot {
+				if total == int64(written) {
+					s.reportState(ref.Channel, "ready", "正在中继原始媒体")
+				}
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
 			}
 			if cacheable {
 				if capture.Len()+n <= 4*1024*1024 {
@@ -513,14 +604,23 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, ref resource, set
 		}
 		if readErr != nil {
 			s.count(total)
+			if r.Context().Err() != nil {
+				return resp.StatusCode, nil
+			}
 			if readErr != io.EOF || (resp.ContentLength >= 0 && total != resp.ContentLength) {
 				// A normal return would terminate a chunked response successfully even
 				// though the upstream segment was truncated. Abort the response instead.
-				s.resolver.Invalidate(ref.Channel)
+				if !ref.Stream {
+					s.resolver.Invalidate(ref.Channel)
+				}
 				s.reportFailure(ref.Channel, "视频分片传输中断，请检查网络或重新打开频道")
 				panic(http.ErrAbortHandler)
 			}
-			s.clearFailure(ref.Channel)
+			if ref.Stream {
+				s.reportState(ref.Channel, "ready", "媒体传输正常")
+			} else {
+				s.clearFailure(ref.Channel)
+			}
 			if readErr == io.EOF && cacheable && (resp.ContentLength < 0 || total == resp.ContentLength) {
 				s.cache.put(cachedSegment{key: key, data: capture.Bytes(), header: h, status: resp.StatusCode})
 			}

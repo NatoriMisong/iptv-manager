@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
-	"youtube-tv/internal/core"
-	"youtube-tv/internal/store"
+	"iptv-manager/internal/core"
+	"iptv-manager/internal/store"
 )
 
 func TestBulkAPIWithSQLite(t *testing.T) {

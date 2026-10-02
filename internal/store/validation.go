@@ -8,7 +8,8 @@ import (
 	"strings"
 	"unicode"
 
-	"youtube-tv/internal/core"
+	"iptv-manager/internal/core"
+	"iptv-manager/internal/source"
 )
 
 var (
@@ -130,7 +131,10 @@ func normalizeChannel(ch core.Channel) (core.Channel, error) {
 		return ch, invalid("channel name cannot be empty")
 	}
 	var err error
-	ch.URL, err = youtubeURL(ch.URL)
+	if ch.SourceType == "" {
+		ch.SourceType = "youtube"
+	}
+	ch.URL, err = channelURL(ch.SourceType, ch.URL)
 	if err != nil {
 		return ch, err
 	}
@@ -149,11 +153,29 @@ func normalizeChannel(ch core.Channel) (core.Channel, error) {
 	if !validQuality(ch.Quality, true) {
 		return ch, invalid("unsupported channel quality")
 	}
+	if ch.IsStream() {
+		ch.Quality = 0
+	}
 	if ch.SortOrder < 0 {
 		return ch, invalid("sort order cannot be negative")
 	}
 	ch.Proxy, err = proxyValue(ch.Proxy, true)
 	return ch, err
+}
+
+func channelURL(kind, raw string) (string, error) {
+	if kind == "" || kind == "youtube" {
+		return youtubeURL(raw)
+	}
+	if kind != "stream" {
+		return "", invalid("unsupported source type")
+	}
+	if err := source.ValidateURL(raw); err != nil {
+		return "", invalid("%s", err)
+	}
+	u, _ := url.Parse(raw)
+	u.Host = strings.ToLower(u.Host)
+	return u.String(), nil
 }
 
 func normalizeSettings(s core.Settings) (core.Settings, error) {

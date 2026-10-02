@@ -1,4 +1,4 @@
-module youtube-tv
+module iptv-manager
 
 go 1.24.0
 

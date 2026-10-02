@@ -19,8 +19,9 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
-	"youtube-tv/internal/core"
-	"youtube-tv/internal/store"
+	"iptv-manager/internal/core"
+	"iptv-manager/internal/store"
+	"iptv-manager/internal/subscription"
 )
 
 //go:embed static/*
@@ -40,6 +41,9 @@ type Repository interface {
 	Export(context.Context) (core.Backup, error)
 	Import(context.Context, core.Backup) error
 	Traffic(context.Context, string) (core.Traffic, error)
+	Subscriptions(context.Context) ([]core.Subscription, error)
+	SaveSubscription(context.Context, core.Subscription) (core.Subscription, error)
+	DeleteSubscription(context.Context, string) error
 }
 
 type Media interface {
@@ -48,8 +52,9 @@ type Media interface {
 }
 
 type Options struct {
-	SecureCookies bool
-	Version       string
+	SecureCookies    bool
+	Version          string
+	SyncSubscription func(context.Context, string) error
 }
 
 type session struct {
@@ -72,7 +77,7 @@ type server struct {
 	attempts     map[string]attempt
 }
 
-const sessionCookie = "ytv_session"
+const sessionCookie = "iptv_session"
 const sessionLifetime = 8 * time.Hour
 const maxBody = 1 << 20
 
@@ -91,6 +96,10 @@ func New(repo Repository, media Media, opts Options) (http.Handler, error) {
 	mux.HandleFunc("GET /api/state", s.auth(s.state))
 	mux.HandleFunc("POST /api/channels", s.auth(s.saveChannel))
 	mux.HandleFunc("POST /api/channels/bulk", s.auth(s.addChannels))
+	mux.HandleFunc("POST /api/subscriptions", s.auth(s.saveSubscription))
+	mux.HandleFunc("PUT /api/subscriptions/{id}", s.auth(s.saveSubscription))
+	mux.HandleFunc("DELETE /api/subscriptions/{id}", s.auth(s.deleteSubscription))
+	mux.HandleFunc("POST /api/subscriptions/{id}/sync", s.auth(s.syncSubscription))
 	mux.HandleFunc("PUT /api/channels/{id}", s.auth(s.saveChannel))
 	mux.HandleFunc("DELETE /api/channels/{id}", s.auth(s.deleteChannel))
 	mux.HandleFunc("POST /api/channels/{id}/refresh", s.auth(s.refresh))
@@ -142,11 +151,14 @@ func fail(w http.ResponseWriter, status int, message string) {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
+	return decodeLimit(w, r, v, maxBody)
+}
+func decodeLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
 	if strings.Split(r.Header.Get("Content-Type"), ";")[0] != "application/json" {
 		fail(w, 415, "请使用 JSON 请求")
 		return false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(v); err != nil {
@@ -321,11 +333,16 @@ func (s *server) state(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "无法读取流量")
 		return
 	}
+	subs, err := s.repo.Subscriptions(r.Context())
+	if err != nil {
+		fail(w, 500, "无法读取 M3U 订阅")
+		return
+	}
 	c, _ := r.Cookie(sessionCookie)
 	s.mu.Lock()
 	csrf := s.sessions[c.Value].csrf
 	s.mu.Unlock()
-	respond(w, 200, map[string]any{"channels": channels, "settings": settings, "statuses": s.media.Statuses(), "traffic": traffic, "version": s.opts.Version, "csrf": csrf})
+	respond(w, 200, map[string]any{"channels": channels, "subscriptions": subs, "settings": settings, "statuses": s.media.Statuses(), "traffic": traffic, "version": s.opts.Version, "csrf": csrf})
 }
 
 func (s *server) saveChannel(w http.ResponseWriter, r *http.Request) {
@@ -342,11 +359,63 @@ func (s *server) saveChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	saved, err := s.repo.SaveChannel(r.Context(), ch)
 	if err != nil {
-		fail(w, 400, "频道保存失败，请检查名称、YouTube 链接、画质和代理设置")
+		fail(w, 400, "频道保存失败，请检查名称、来源类型、直播链接、画质和代理设置")
 		return
 	}
 	s.media.Invalidate(saved.ID)
 	respond(w, 200, saved)
+}
+
+func (s *server) saveSubscription(w http.ResponseWriter, r *http.Request) {
+	var sub core.Subscription
+	if !decode(w, r, &sub) {
+		return
+	}
+	sub.ID = r.PathValue("id")
+	saved, err := s.repo.SaveSubscription(r.Context(), sub)
+	if err != nil {
+		if errors.Is(err, store.ErrValidation) {
+			fail(w, 400, strings.TrimPrefix(err.Error(), store.ErrValidation.Error()+": "))
+		} else if errors.Is(err, store.ErrNotFound) {
+			fail(w, 404, "订阅不存在")
+		} else {
+			fail(w, 500, "订阅保存失败")
+		}
+		return
+	}
+	respond(w, 200, saved)
+}
+func (s *server) deleteSubscription(w http.ResponseWriter, r *http.Request) {
+	channels, err := s.repo.Channels(r.Context())
+	if err != nil {
+		fail(w, 500, "无法读取频道")
+		return
+	}
+	if err := s.repo.DeleteSubscription(r.Context(), r.PathValue("id")); err != nil {
+		fail(w, 400, "订阅删除失败")
+		return
+	}
+	for _, ch := range channels {
+		if ch.SubscriptionID == r.PathValue("id") {
+			s.media.Invalidate(ch.ID)
+		}
+	}
+	respond(w, 200, map[string]bool{"ok": true})
+}
+func (s *server) syncSubscription(w http.ResponseWriter, r *http.Request) {
+	if s.opts.SyncSubscription == nil {
+		fail(w, 503, "订阅同步暂不可用")
+		return
+	}
+	if err := s.opts.SyncSubscription(r.Context(), r.PathValue("id")); err != nil {
+		code := 502
+		if errors.Is(err, subscription.ErrBusy) {
+			code = 409
+		}
+		fail(w, code, err.Error())
+		return
+	}
+	respond(w, 200, map[string]string{"message": "订阅同步完成"})
 }
 
 func (s *server) addChannels(w http.ResponseWriter, r *http.Request) {
@@ -378,11 +447,16 @@ func (s *server) deleteChannel(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) refresh(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, err := s.repo.Channel(r.Context(), id); err != nil {
+	ch, err := s.repo.Channel(r.Context(), id)
+	if err != nil {
 		fail(w, 404, "频道不存在")
 		return
 	}
 	s.media.Invalidate(id)
+	if ch.IsStream() {
+		respond(w, 200, map[string]string{"message": "已清除播放状态，下次播放重新连接来源"})
+		return
+	}
 	respond(w, 200, map[string]string{"message": "已清除来源缓存，下次播放时重新解析"})
 }
 
@@ -435,13 +509,13 @@ func (s *server) backup(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "导出失败")
 		return
 	}
-	w.Header().Set("Content-Disposition", `attachment; filename="youtube-tv-backup.json"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="iptv-manager-backup.json"`)
 	respond(w, 200, b)
 }
 
 func (s *server) restore(w http.ResponseWriter, r *http.Request) {
 	var b core.Backup
-	if !decode(w, r, &b) {
+	if !decodeLimit(w, r, &b, 32<<20) {
 		return
 	}
 	old, err := s.repo.Channels(r.Context())

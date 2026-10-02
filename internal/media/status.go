@@ -1,8 +1,10 @@
 package media
 
 import (
+	"context"
 	"time"
-	"youtube-tv/internal/core"
+
+	"iptv-manager/internal/core"
 )
 
 func (s *Server) Statuses() map[string]core.ChannelStatus {
@@ -32,9 +34,17 @@ func (s *Server) Invalidate(id string) {
 	s.mu.Lock()
 	delete(s.failures, id)
 	s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if ch, err := s.repo.Channel(ctx, id); err == nil && ch.IsStream() {
+		s.reportState(id, "unknown", "等待连接原始直播源")
+	}
 }
 
 func (s *Server) reportFailure(id, message string) {
+	s.reportState(id, "error", message)
+}
+func (s *Server) reportState(id, state, message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.failures) >= 512 {
@@ -43,7 +53,7 @@ func (s *Server) reportFailure(id, message string) {
 			break
 		}
 	}
-	s.failures[id] = core.ChannelStatus{State: "error", Message: message, UpdatedAt: time.Now()}
+	s.failures[id] = core.ChannelStatus{State: state, Message: message, UpdatedAt: time.Now()}
 }
 
 func (s *Server) clearFailure(id string) { s.mu.Lock(); delete(s.failures, id); s.mu.Unlock() }

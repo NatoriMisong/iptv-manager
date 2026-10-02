@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"youtube-tv/internal/core"
+	"iptv-manager/internal/core"
 )
 
 func TestBulkChannelsMixedRowsAndRetry(t *testing.T) {

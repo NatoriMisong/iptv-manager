@@ -4,6 +4,7 @@
 .env
 data
 dist
-youtube-tv
+iptv-manager
 *.db*
 local-test
+youtube-tv

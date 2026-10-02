@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"youtube-tv/internal/core"
-	"youtube-tv/internal/resolver"
+	"iptv-manager/internal/core"
+	"iptv-manager/internal/resolver"
 )
 
 func splitMaster(prefix string, reversed bool) string {

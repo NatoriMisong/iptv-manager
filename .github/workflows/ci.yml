@@ -45,6 +45,6 @@ jobs:
           context: .
           platforms: linux/amd64
           push: false
-          tags: youtube-tv:ci
+          tags: iptv-manager:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max

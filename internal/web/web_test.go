@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
-	"youtube-tv/internal/core"
+	"iptv-manager/internal/core"
 )
 
 type memoryRepo struct {
@@ -41,9 +41,17 @@ func (r *memoryRepo) AddChannels(context.Context, core.BulkChannelRequest) (core
 	r.changes++
 	return core.BulkChannelResult{}, r.bulkErr
 }
-func (r *memoryRepo) DeleteChannel(context.Context, string) error     { r.changes++; return nil }
-func (r *memoryRepo) Reorder(context.Context, []string) error         { r.changes++; return nil }
-func (r *memoryRepo) Settings(context.Context) (core.Settings, error) { return r.settings, nil }
+func (r *memoryRepo) Subscriptions(context.Context) ([]core.Subscription, error) {
+	return []core.Subscription{}, nil
+}
+func (r *memoryRepo) SaveSubscription(_ context.Context, sub core.Subscription) (core.Subscription, error) {
+	r.changes++
+	return sub, nil
+}
+func (r *memoryRepo) DeleteSubscription(context.Context, string) error { r.changes++; return nil }
+func (r *memoryRepo) DeleteChannel(context.Context, string) error      { r.changes++; return nil }
+func (r *memoryRepo) Reorder(context.Context, []string) error          { r.changes++; return nil }
+func (r *memoryRepo) Settings(context.Context) (core.Settings, error)  { return r.settings, nil }
 func (r *memoryRepo) SaveSettings(_ context.Context, s core.Settings) error {
 	r.settings = s
 	r.changes++

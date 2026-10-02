@@ -2,10 +2,11 @@ package store
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
-	"youtube-tv/internal/core"
+	"iptv-manager/internal/core"
 )
 
 const maxBulkChannels = 100
@@ -23,21 +24,21 @@ func (s *Store) AddChannels(ctx context.Context, req core.BulkChannelRequest) (c
 		return core.BulkChannelResult{}, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT id,url,sort_order FROM channels ORDER BY sort_order,id`)
+	rows, err := tx.QueryContext(ctx, `SELECT id,url,sort_order,source_type FROM channels ORDER BY sort_order,id`)
 	if err != nil {
 		return core.BulkChannelResult{}, err
 	}
 	seen := make(map[string]string)
 	nextOrder := 0
 	for rows.Next() {
-		var id, rawURL string
+		var id, rawURL, kind string
 		var order int
-		if err := rows.Scan(&id, &rawURL, &order); err != nil {
+		if err := rows.Scan(&id, &rawURL, &order, &kind); err != nil {
 			rows.Close()
 			return core.BulkChannelResult{}, err
 		}
-		if canonical, err := youtubeURL(rawURL); err == nil && seen[canonical] == "" {
-			seen[canonical] = id
+		if canonical, err := channelURL(kind, rawURL); err == nil && seen[kind+"\x00"+canonical] == "" {
+			seen[kind+"\x00"+canonical] = id
 		}
 		if order >= nextOrder {
 			nextOrder = order + 1
@@ -56,7 +57,7 @@ func (s *Store) AddChannels(ctx context.Context, req core.BulkChannelRequest) (c
 		if item.Status == "failed" {
 			continue
 		}
-		if id := seen[ch.URL]; id != "" {
+		if id := seen[ch.SourceType+"\x00"+ch.URL]; id != "" {
 			item.Status, item.Message, item.ChannelID = "skipped", "此链接已存在，已跳过", id
 			result.Skipped++
 			continue
@@ -66,11 +67,14 @@ func (s *Store) AddChannels(ctx context.Context, req core.BulkChannelRequest) (c
 			return core.BulkChannelResult{}, err
 		}
 		ch.SortOrder = nextOrder
+		if err := checkChannelCapacity(ctx, tx, 1); err != nil {
+			return core.BulkChannelResult{}, err
+		}
 		if err := insertChannel(ctx, tx, ch); err != nil {
 			return core.BulkChannelResult{}, err
 		}
 		nextOrder++
-		seen[ch.URL] = ch.ID
+		seen[ch.SourceType+"\x00"+ch.URL] = ch.ID
 		item.Status, item.Message, item.ChannelID = "added", "已添加", ch.ID
 		result.Added++
 	}
@@ -81,6 +85,12 @@ func (s *Store) AddChannels(ctx context.Context, req core.BulkChannelRequest) (c
 }
 
 func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []core.Channel, error) {
+	if req.SourceType == "" {
+		req.SourceType = "youtube"
+	}
+	if req.SourceType != "youtube" && req.SourceType != "stream" {
+		return core.BulkChannelResult{}, nil, invalid("来源类型无效")
+	}
 	if len(req.Text) > maxBulkText {
 		return core.BulkChannelResult{}, nil, invalid("批量内容不能超过 256 KB")
 	}
@@ -108,7 +118,7 @@ func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []c
 		if len(result.Results) == maxBulkChannels {
 			return core.BulkChannelResult{}, nil, invalid("每批最多添加 100 行频道，请分批提交")
 		}
-		ch := core.Channel{URL: raw, Group: req.Group, Mode: req.Mode, Quality: req.Quality, Enabled: true, Proxy: "inherit"}
+		ch := core.Channel{URL: raw, SourceType: req.SourceType, Group: req.Group, Mode: req.Mode, Quality: req.Quality, Enabled: true, Proxy: "inherit"}
 		named := false
 		// Do not split commas inside a bare URL's query string.
 		if !strings.HasPrefix(raw, "https://") && !strings.HasPrefix(raw, "http://") {
@@ -118,13 +128,20 @@ func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []c
 			}
 		}
 		item := core.BulkChannelItem{Line: line + 1, Name: ch.Name}
-		canonical, err := youtubeURL(ch.URL)
+		canonical, err := channelURL(ch.SourceType, ch.URL)
 		if err != nil {
 			item.Status, item.Message = "failed", "链接无效，请使用 YouTube watch?v=… 或 youtu.be/… 链接（视频 ID 为 11 位）"
+			if ch.IsStream() {
+				item.Message = "链接无效，请使用公网 HTTP/HTTPS 直播地址"
+			}
 		} else {
 			ch.URL = canonical
 			if !named {
 				ch.Name = "YouTube " + strings.TrimPrefix(canonical, "https://www.youtube.com/watch?v=")
+				if ch.IsStream() {
+					u, _ := url.Parse(canonical)
+					ch.Name = u.Hostname()
+				}
 			}
 			item.Name, item.URL = ch.Name, ch.URL
 			ch, err = normalizeChannel(ch)
@@ -139,7 +156,7 @@ func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []c
 		channels = append(channels, ch)
 	}
 	if len(result.Results) == 0 {
-		return core.BulkChannelResult{}, nil, invalid("请至少填写一行 YouTube 直播链接")
+		return core.BulkChannelResult{}, nil, invalid("请至少填写一行直播链接")
 	}
 	return result, channels, nil
 }

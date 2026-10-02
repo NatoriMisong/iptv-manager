@@ -1,6 +1,6 @@
 services:
   app:
-    image: youtube-tv:local
+    image: iptv-manager:local
     build:
       context: .
       args:

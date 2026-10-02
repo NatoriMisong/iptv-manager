@@ -10,14 +10,14 @@ import (
 	"sync"
 	"testing"
 
-	"youtube-tv/internal/core"
+	"iptv-manager/internal/core"
 )
 
 var testContext = context.Background()
 
 func testStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "state", "youtube-tv.db"))
+	s, err := Open(filepath.Join(t.TempDir(), "state", "iptv-manager.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestImportIsAtomicAndExcludesAdmin(t *testing.T) {
 			case "settings":
 				backup.Settings.BaseURL = "https://tv.example.com/subpath"
 			case "version":
-				backup.Version = 2
+				backup.Version = 3
 			}
 			if err := s.Import(testContext, backup); !errors.Is(err, ErrValidation) {
 				t.Fatalf("import error = %v", err)

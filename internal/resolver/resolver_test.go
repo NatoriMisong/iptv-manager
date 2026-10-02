@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"youtube-tv/internal/core"
+	"iptv-manager/internal/core"
 )
 
 func testChannel(id string) core.Channel {

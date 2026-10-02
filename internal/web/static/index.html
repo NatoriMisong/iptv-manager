@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>YouTube TV · 直播频道管理</title>
+  <title>IPTV Manager · 直播频道管理</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
@@ -14,7 +14,7 @@
     <section class="login-card">
       <div class="brand-mark" aria-hidden="true">▶</div>
       <p class="eyebrow">YOUR CHANNELS. ANY SCREEN.</p>
-      <h1>欢迎回到 YouTube TV</h1>
+      <h1>欢迎回到 IPTV Manager</h1>
       <p class="muted">管理你的直播频道，让每一块屏幕轻松连接。</p>
       <form id="login-form">
         <label for="login-password">管理密码</label>
@@ -27,13 +27,13 @@
   </main>
   <div id="app" hidden>
     <header class="topbar">
-      <a class="brand" href="/"><span class="brand-mark small" aria-hidden="true">▶</span><span>YouTube <strong>TV</strong></span></a>
-      <nav aria-label="管理导航"><button class="nav active" data-view="channels">频道管理</button><button class="nav" data-view="settings">服务设置</button></nav>
+      <a class="brand" href="/"><span class="brand-mark small" aria-hidden="true">▶</span><span>IPTV <strong>Manager</strong></span></a>
+      <nav aria-label="管理导航"><button class="nav active" data-view="channels">频道管理</button><button class="nav" data-view="subscriptions">M3U 订阅</button><button class="nav" data-view="settings">服务设置</button></nav>
       <div class="header-actions"><span id="version" class="version"></span><button id="logout" class="quiet">退出登录</button></div>
     </header>
     <main class="workspace">
       <section id="view-channels">
-        <div class="page-heading"><div><p class="eyebrow">YOUR LIVE COLLECTION</p><h1>把喜欢的频道，放在一起。</h1><p class="muted">一个订阅地址，在 VLC、电视和电脑上观看。</p></div><div class="channel-actions"><button id="bulk-add" class="outline">批量添加</button><button id="add-channel" class="primary"><span aria-hidden="true">＋</span> 添加频道</button></div></div>
+        <div class="page-heading"><div><p class="eyebrow">YOUR LIVE COLLECTION</p><h1>把直播来源，放在一起。</h1><p class="muted">通用直播、M3U 订阅和 YouTube，一个地址随处观看。</p></div><div class="channel-actions"><button id="bulk-add" class="outline">批量添加</button><button id="add-channel" class="primary"><span aria-hidden="true">＋</span> 添加频道</button></div></div>
         <div class="stats">
           <article class="stat"><span class="stat-label">频道总数</span><div><strong id="total-count">—</strong><span class="stat-unit">个频道</span></div><p id="enabled-count" class="muted">正在读取配置</p></article>
           <article class="stat"><span class="stat-label">本月中继流量</span><div><strong id="traffic-value">—</strong><span id="traffic-unit" class="stat-unit">GB</span></div><p class="muted">仅统计本服务转发的媒体数据</p></article>
@@ -42,41 +42,67 @@
         <section class="panel subscription-panel" aria-labelledby="subscription-title">
           <div class="subscription-intro"><span class="tile-icon" aria-hidden="true">↗</span><div><h2 id="subscription-title">你的 IPTV 订阅</h2><p class="muted">复制地址，在 VLC 的「打开网络串流」中粘贴。</p></div></div>
           <div class="subscription-options"><button data-subscription="default" class="outline">复制默认订阅</button><button data-subscription="relay" class="outline">复制中继订阅</button><button data-subscription="direct" class="outline">复制直连订阅</button></div>
-          <p class="tiny muted subscription-help">中继：设备只连接服务器。直连：设备需能访问 YouTube，且来源允许跨网络使用。地址包含播放令牌，请仅分享给自己的设备。</p>
+          <p class="tiny muted subscription-help">中继：设备只连接服务器。直连：设备需能访问原始直播源，且来源允许该设备使用。地址包含播放令牌，请仅分享给自己的设备。</p>
         </section>
         <section class="panel channels-panel" aria-labelledby="channels-title">
-          <div class="panel-heading"><div><h2 id="channels-title">频道列表 <span id="table-count" class="count-pill">0</span></h2><p class="muted">按需解析直播来源；未播放的频道显示「未检测」。</p></div><button id="reload" class="quiet">↻ 刷新状态</button></div>
+          <div class="panel-heading"><div><h2 id="channels-title">频道列表 <span id="table-count" class="count-pill">0</span></h2><p class="muted">支持直连或中继；YouTube 按需解析，通用源直接连接。</p></div><button id="reload" class="quiet">↻ 刷新状态</button></div>
           <div class="table-wrap"><table><thead><tr><th class="order-col">排序</th><th>频道</th><th>播放方式</th><th>画质上限</th><th>来源状态</th><th>启用</th><th class="actions-head">操作</th></tr></thead><tbody id="channel-rows"></tbody></table></div>
-          <div id="empty-state" class="empty" hidden><span aria-hidden="true">▷</span><h3>从第一个直播频道开始</h3><p class="muted">添加 YouTube 直播链接，生成自己的 IPTV 订阅。</p><button id="empty-add" class="outline">添加频道</button></div>
+          <div id="empty-state" class="empty" hidden><span aria-hidden="true">▷</span><h3>从第一个直播频道开始</h3><p class="muted">添加直播地址、M3U 订阅或 YouTube 直播，生成自己的 IPTV 订阅。</p><button id="empty-add" class="outline">添加频道</button></div>
           <div class="table-footer"><span class="muted tiny">频道地址保持固定，调整排序不会影响播放链接。</span><button id="backup" class="quiet">导出配置</button><button id="restore" class="quiet">导入配置</button><input id="restore-file" type="file" accept="application/json,.json" hidden></div>
         </section>
-        <p class="footnote">优先使用原生 HLS · 不进行视频转码 · 无播放请求时不持续拉取视频</p>
+        <p class="footnote">原始直播直连或中继 · M3U 订阅自动更新 · YouTube 按需解析 · 不转码</p>
+      </section>
+      <section id="view-subscriptions" hidden>
+        <div class="page-heading"><div><p class="eyebrow">KEEP YOUR CHANNELS CURRENT</p><h1>M3U 订阅</h1><p class="muted">定时更新频道名称、分组、图标和直播地址。</p></div><button id="add-subscription" class="primary">＋ 添加订阅</button></div>
+        <section class="panel settings-card"><p class="muted">订阅频道支持逐个选择直连或中继，默认使用全局设置。同步失败保留当前频道；来源中消失的频道标记为失效，再出现时恢复原播放地址。</p><p class="field-help">频道名称和来源信息随订阅更新，播放方式、代理、排序和启停状态由你管理。暂停自动更新后仍可手动同步。</p></section>
+        <div id="subscription-list" class="subscription-list"></div>
+        <div id="subscriptions-empty" class="empty" hidden><h3>添加你的第一个 M3U 订阅</h3><p class="muted">填写包含多个频道的 HTTP/HTTPS M3U 列表地址，后续自动更新。</p></div>
       </section>
       <section id="view-settings" hidden>
         <div class="page-heading"><div><p class="eyebrow">MAKE IT YOURS</p><h1>服务设置</h1><p class="muted">配置默认播放方式、访问地址和流量预算。</p></div></div>
         <div class="settings-layout">
           <form id="settings-form" class="panel settings-card">
             <h2>连接与播放</h2><label for="base-url">公开访问地址</label><input id="base-url" name="base_url" type="url" required placeholder="http://tv.example.com:9000"><p class="field-help">填写播放器可访问的 HTTP 地址（域名或 IP，包含端口），不包含末尾路径。自行配置 HTTPS 后，填写对应的 HTTPS 地址。首次使用请先保存此设置。</p>
-            <div class="form-grid"><div><label for="default-mode">默认播放方式</label><select id="default-mode" name="default_mode"><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div><label for="default-quality">默认画质上限</label><select id="default-quality" name="default_quality"><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
-            <label for="upstream-proxy">服务器出站代理</label><input id="upstream-proxy" name="upstream_proxy" type="password" autocomplete="off" placeholder="direct 或 http://proxy:port"><p class="field-help">默认 direct，服务器直接访问 YouTube。支持 HTTP、HTTPS、SOCKS5 代理地址，按需填写。</p>
+            <div class="form-grid"><div><label for="default-mode">默认播放方式</label><select id="default-mode" name="default_mode"><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div><label for="default-quality">YouTube 默认画质上限</label><select id="default-quality" name="default_quality"><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
+            <label for="upstream-proxy">服务器出站代理</label><input id="upstream-proxy" name="upstream_proxy" type="password" autocomplete="off" placeholder="direct 或 http://proxy:port"><p class="field-help">默认 direct，服务器直接访问直播源和订阅列表。支持 HTTP、HTTPS、SOCKS5 代理地址，按需填写。</p>
             <label for="monthly-budget">月度流量预算（GB）</label><input id="monthly-budget" name="monthly_budget_gb" type="number" min="1" max="1000000" required><p class="field-help">每月按 UTC 时间统计。服务商可能采用不同的计费口径。</p>
             <div class="form-footer"><button class="primary" type="submit">保存设置</button><span id="settings-error" class="error" role="alert"></span></div>
           </form>
-          <div class="settings-side"><section class="panel settings-card"><h2>访问安全</h2><p class="muted">管理密码保护网页后台，播放令牌保护订阅和媒体地址。</p><button id="change-password" class="outline wide">修改管理密码</button><button id="rotate-token" class="outline wide">重置播放令牌</button><p class="field-help">重置令牌后，旧订阅和播放地址失效，需要在设备上重新导入。</p></section><section class="panel settings-card"><h2>轻量运行</h2><p class="muted">直播来源按需解析。多个设备打开同一频道时，共享解析结果；中继媒体采用流式转发和有限缓存。</p><p class="field-help">选择更低的画质上限可以减少流量，但不会重新编码视频。实际格式以 YouTube 提供的来源为准。</p></section></div>
+          <div class="settings-side"><section class="panel settings-card"><h2>访问安全</h2><p class="muted">管理密码保护网页后台，播放令牌保护订阅和媒体地址。</p><button id="change-password" class="outline wide">修改管理密码</button><button id="rotate-token" class="outline wide">重置播放令牌</button><p class="field-help">重置令牌后，旧订阅和播放地址失效，需要在设备上重新导入。</p></section><section class="panel settings-card"><h2>轻量运行</h2><p class="muted">直播来源按需解析。多个设备打开同一频道时，共享解析结果；中继媒体采用流式转发和有限缓存。</p><p class="field-help">画质上限仅用于 YouTube 来源。通用直播保留原有画质，由播放器选择可用格式。</p></section></div>
         </div>
       </section>
     </main>
   </div>
-  <dialog id="channel-dialog"><form id="channel-form"><div class="dialog-heading"><div><p class="eyebrow">LIVE CHANNEL</p><h2 id="channel-dialog-title">添加频道</h2></div><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div><input name="id" type="hidden"><input name="sort_order" type="hidden" value="0"><label for="channel-name">频道名称</label><input id="channel-name" name="name" maxlength="120" required placeholder="例如：中天新闻"><label for="channel-url">YouTube 直播链接</label><input id="channel-url" name="url" type="url" required placeholder="https://www.youtube.com/watch?v=…"><div class="form-grid"><div><label for="channel-group">分组</label><input id="channel-group" name="group" maxlength="80" placeholder="新闻"></div><div><label for="channel-mode">播放方式</label><select id="channel-mode" name="mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div></div><div class="form-grid"><div><label for="channel-quality">画质上限</label><select id="channel-quality" name="quality"><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div><div><label for="channel-enabled">频道状态</label><select id="channel-enabled" name="enabled"><option value="true">启用</option><option value="false">停用</option></select></div></div><details><summary>更多选项</summary><label for="channel-logo">频道图标地址</label><input id="channel-logo" name="logo" type="url" placeholder="https://example.com/logo.png"><label for="channel-proxy">出站代理</label><input id="channel-proxy" name="proxy" type="password" autocomplete="off" placeholder="inherit"><p class="field-help">inherit 继承全局，direct 强制直连，或填写 HTTP、HTTPS、SOCKS5 代理地址。</p></details><p id="channel-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button type="submit" class="primary">保存频道</button></div></form></dialog>
+  <dialog id="channel-dialog" aria-labelledby="channel-dialog-title"><form id="channel-form">
+    <div class="dialog-heading"><div><p class="eyebrow">LIVE CHANNEL</p><h2 id="channel-dialog-title">添加频道</h2></div><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div>
+    <input name="id" type="hidden"><input name="sort_order" type="hidden" value="0">
+    <label for="channel-type">来源类型</label><select id="channel-type" name="source_type"><option value="stream">通用直播源（M3U8 / HTTP）</option><option value="youtube">YouTube 直播</option></select>
+    <p id="channel-managed" class="field-help" hidden>此频道来自 M3U 订阅，名称、分组、图标和地址随订阅同步。可以在这里调整播放方式、代理和启停状态。</p>
+    <label for="channel-name">频道名称</label><input id="channel-name" name="name" maxlength="120" required placeholder="例如：新闻频道">
+    <label for="channel-url">直播来源地址</label><input id="channel-url" name="url" type="url" required placeholder="https://example.com/live.m3u8"><p id="channel-source-help" class="field-help"></p>
+    <div class="form-grid"><div><label for="channel-group">分组</label><input id="channel-group" name="group" maxlength="80" placeholder="新闻"></div><div><label for="channel-mode">播放方式</label><select id="channel-mode" name="mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div></div>
+    <div class="form-grid"><div id="channel-quality-field"><label for="channel-quality">YouTube 画质上限</label><select id="channel-quality" name="quality"><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div><div><label for="channel-enabled">频道状态</label><select id="channel-enabled" name="enabled"><option value="true">启用</option><option value="false">停用</option></select></div></div>
+    <details><summary>更多选项</summary><label for="channel-logo">频道图标地址</label><input id="channel-logo" name="logo" type="url" placeholder="https://example.com/logo.png"><label for="channel-proxy">出站代理</label><input id="channel-proxy" name="proxy" type="password" autocomplete="off" placeholder="inherit"><p class="field-help">inherit 继承全局，direct 强制直连，或填写 HTTP、HTTPS、SOCKS5 代理地址。客户端直连时不使用服务器代理。</p></details>
+    <p id="channel-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button type="submit" class="primary">保存频道</button></div>
+  </form></dialog>
+  <dialog id="subscription-dialog" aria-labelledby="subscription-dialog-title"><form id="subscription-form">
+    <div class="dialog-heading"><h2 id="subscription-dialog-title">添加 M3U 订阅</h2><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div><input name="id" type="hidden">
+    <label for="subscription-name">订阅名称</label><input id="subscription-name" name="name" required maxlength="150" placeholder="例如：我的电视频道">
+    <label for="subscription-url">M3U 列表地址</label><input id="subscription-url" name="url" type="url" required placeholder="https://example.com/channels.m3u"><p class="field-help">填写包含多个频道的列表地址。单个 M3U8 直播请使用“添加频道”。</p>
+    <div class="form-grid"><div><label for="subscription-interval">更新间隔（分钟）</label><input id="subscription-interval" name="interval_minutes" type="number" min="5" max="10080" value="60" required></div><div><label for="subscription-enabled">自动更新</label><select id="subscription-enabled" name="enabled"><option value="true">启用</option><option value="false">暂停</option></select></div></div>
+    <label for="subscription-proxy">获取列表时使用的代理</label><input id="subscription-proxy" name="proxy" type="password" autocomplete="off" placeholder="inherit"><p class="field-help">inherit 继承全局，direct 直接连接，或填写代理地址。频道中继的代理可另行设置。</p>
+    <p id="subscription-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button type="submit" class="primary">保存订阅</button></div>
+  </form></dialog>
   <dialog id="bulk-dialog" aria-labelledby="bulk-title">
     <form id="bulk-form">
       <div class="dialog-heading"><div><p class="eyebrow">ADD YOUR COLLECTION</p><h2 id="bulk-title">批量添加频道</h2></div><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div>
       <p class="muted">每行一个链接，最多 100 行。重复链接自动跳过，有误的行会单独提示。</p>
-      <label for="bulk-text">频道名称和 YouTube 链接 <span id="bulk-count" class="muted">0 / 100</span></label>
+      <label for="bulk-type">来源类型</label><select id="bulk-type" name="source_type"><option value="stream">通用直播源（M3U8 / HTTP）</option><option value="youtube">YouTube 直播</option></select>
+      <label for="bulk-text">频道名称和直播链接 <span id="bulk-count" class="muted">0 / 100</span></label>
       <textarea id="bulk-text" name="text" rows="6" required maxlength="262144" spellcheck="false" aria-describedby="bulk-help" placeholder="中天新闻,https://www.youtube.com/watch?v=vr3XyVCR4T0&#10;东森新闻 51,https://youtu.be/V1p33hqPrUk&#10;https://www.youtube.com/watch?v=…"></textarea>
-      <p id="bulk-help" class="field-help">支持英文逗号、中文逗号或 Tab 分隔名称与链接；空行忽略。仅填写链接时，名称使用 YouTube + 视频 ID，可添加后编辑。</p>
+      <p id="bulk-help" class="field-help">支持英文逗号、中文逗号或 Tab 分隔名称与链接；空行忽略。仅填写链接时自动生成名称，可添加后编辑。</p>
       <label for="bulk-group">统一分组（可选）</label><input id="bulk-group" name="group" maxlength="150" placeholder="例如：新闻">
-      <div class="form-grid"><div><label for="bulk-mode">播放方式</label><select id="bulk-mode" name="mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div><label for="bulk-quality">画质上限</label><select id="bulk-quality" name="quality"><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
+      <div class="form-grid"><div><label for="bulk-mode">播放方式</label><select id="bulk-mode" name="mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div id="bulk-quality-field"><label for="bulk-quality">YouTube 画质上限</label><select id="bulk-quality" name="quality"><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
       <p class="field-help">新频道默认启用，代理继承全局设置，按输入顺序追加。播放时才检查来源是否可用。</p>
       <p id="bulk-error" class="error" role="alert"></p>
       <section id="bulk-results" aria-label="批量添加结果" hidden><p id="bulk-summary" role="status" tabindex="-1"></p><ol id="bulk-result-list"></ol></section>

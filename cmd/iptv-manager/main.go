@@ -17,13 +17,14 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
-	"youtube-tv/internal/media"
-	"youtube-tv/internal/resolver"
-	"youtube-tv/internal/store"
-	"youtube-tv/internal/web"
+	"iptv-manager/internal/media"
+	"iptv-manager/internal/resolver"
+	"iptv-manager/internal/store"
+	"iptv-manager/internal/subscription"
+	"iptv-manager/internal/web"
 )
 
-var version = "0.1.2"
+var version = "0.2.0"
 
 func env(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
@@ -68,7 +69,7 @@ func run() error {
 		return errors.New("LOG_LEVEL 必须为 debug、info、warn 或 error")
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
-	db, err := store.Open(filepath.Join(env("DATA_DIR", "./data"), "youtube-tv.db"))
+	db, err := store.Open(databasePath(env("DATA_DIR", "./data")))
 	if err != nil {
 		return fmt.Errorf("打开 SQLite: %w", err)
 	}
@@ -122,7 +123,8 @@ func run() error {
 	}
 	res := resolver.New(resolver.Options{Command: env("YTDLP_BIN", "yt-dlp"), CookiesFile: os.Getenv("COOKIES_FILE"), JSRuntime: env("JS_RUNTIME", "node"), Timeout: 45 * time.Second})
 	streams := media.New(db, res, media.Options{CacheBytes: int64(cacheMB) * 1024 * 1024, MaxFetches: 8})
-	admin, err := web.New(db, streams, web.Options{SecureCookies: secure, Version: version})
+	subs := subscription.New(db, streams.Invalidate)
+	admin, err := web.New(db, streams, web.Options{SecureCookies: secure, Version: version, SyncSubscription: subs.Sync})
 	if err != nil {
 		return err
 	}
@@ -147,9 +149,13 @@ func run() error {
 	}
 	signals, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	syncCtx, syncCancel := context.WithCancel(signals)
+	syncDone := make(chan struct{})
+	go func() { defer close(syncDone); subs.Run(syncCtx) }()
+	defer func() { syncCancel(); <-syncDone }()
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
-	slog.Info("YouTube TV 已启动", "listen", server.Addr, "version", version, "cache_mb", cacheMB)
+	slog.Info("IPTV Manager 已启动", "listen", server.Addr, "version", version, "cache_mb", cacheMB)
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	var serveErr error
@@ -183,4 +189,16 @@ func run() error {
 		return serveErr
 	}
 	return nil
+}
+
+// Reuse the legacy database in place, including its WAL, when upgrading.
+func databasePath(dir string) string {
+	current := filepath.Join(dir, "iptv-manager.db")
+	if _, err := os.Stat(current); os.IsNotExist(err) {
+		legacy := filepath.Join(dir, "youtube-tv.db")
+		if _, err := os.Stat(legacy); err == nil {
+			return legacy
+		}
+	}
+	return current
 }

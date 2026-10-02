@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"youtube-tv/internal/core"
+	"iptv-manager/internal/core"
 )
 
 func loggingResolver(buffer *bytes.Buffer) *Resolver {
