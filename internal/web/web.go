@@ -94,6 +94,7 @@ func New(repo Repository, media Media, opts Options) (http.Handler, error) {
 	mux.HandleFunc("POST /api/login", s.login)
 	mux.HandleFunc("POST /api/logout", s.auth(s.logout))
 	mux.HandleFunc("GET /api/state", s.auth(s.state))
+	mux.HandleFunc("GET /api/builtin-sources", s.auth(s.builtinSources))
 	mux.HandleFunc("POST /api/channels", s.auth(s.saveChannel))
 	mux.HandleFunc("POST /api/channels/bulk", s.auth(s.addChannels))
 	mux.HandleFunc("POST /api/subscriptions", s.auth(s.saveSubscription))

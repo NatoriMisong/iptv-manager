@@ -76,7 +76,7 @@
   <dialog id="channel-dialog" aria-labelledby="channel-dialog-title"><form id="channel-form">
     <div class="dialog-heading"><div><p class="eyebrow">LIVE CHANNEL</p><h2 id="channel-dialog-title">添加频道</h2></div><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div>
     <input name="id" type="hidden"><input name="sort_order" type="hidden" value="0">
-    <label for="channel-type">来源类型</label><select id="channel-type" name="source_type"><option value="stream">通用直播源（M3U8 / HTTP）</option><option value="youtube">YouTube 直播</option></select>
+    <label for="channel-type">来源类型</label><select id="channel-type" name="source_type"><option value="stream">通用直播源（M3U8 / HTTP）</option><option value="youtube">YouTube 直播</option><option id="channel-builtin-option" value="builtin">内置直播源</option></select>
     <p id="channel-managed" class="field-help" hidden>此频道来自 M3U 订阅，名称、分组、图标和地址随订阅同步。可以在这里调整播放方式、代理和启停状态。</p>
     <label for="channel-name">频道名称</label><input id="channel-name" name="name" maxlength="120" required placeholder="例如：新闻频道">
     <label for="channel-url">直播来源地址</label><input id="channel-url" name="url" type="url" required placeholder="https://example.com/live.m3u8"><p id="channel-source-help" class="field-help"></p>
@@ -84,6 +84,17 @@
     <div class="form-grid"><div id="channel-quality-field"><label for="channel-quality">YouTube 画质上限</label><select id="channel-quality" name="quality"><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div><div><label for="channel-enabled">频道状态</label><select id="channel-enabled" name="enabled"><option value="true">启用</option><option value="false">停用</option></select></div></div>
     <details><summary>更多选项</summary><label for="channel-logo">频道图标地址</label><input id="channel-logo" name="logo" type="url" placeholder="https://example.com/logo.png"><label for="channel-proxy">出站代理</label><input id="channel-proxy" name="proxy" type="password" autocomplete="off" placeholder="inherit"><p class="field-help">inherit 继承全局，direct 强制直连，或填写 HTTP、HTTPS、SOCKS5 代理地址。客户端直连时不使用服务器代理。</p></details>
     <p id="channel-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button type="submit" class="primary">保存频道</button></div>
+  </form></dialog>
+  <dialog id="builtin-dialog" aria-labelledby="builtin-title"><form id="builtin-form">
+    <div class="dialog-heading"><div><p class="eyebrow">READY TO ADD</p><h2 id="builtin-title">添加内置直播源</h2></div><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div>
+    <label for="builtin-source">内置直播源</label><select id="builtin-source"></select>
+    <p id="builtin-description" class="field-help"></p><a id="builtin-website" class="field-help" target="_blank" rel="noopener noreferrer">查看官方网站 ↗</a>
+    <div class="builtin-toolbar"><span id="builtin-count" class="muted tiny" role="status"></span><button id="builtin-select-all" type="button" class="quiet">全选</button><button id="builtin-select-none" type="button" class="quiet">清空</button></div>
+    <div id="builtin-channels" class="builtin-channels" role="group" aria-label="选择内置频道"></div>
+    <div class="form-grid"><div><label for="builtin-group">分组</label><input id="builtin-group" maxlength="150" required></div><div><label for="builtin-mode">播放方式</label><select id="builtin-mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div></div>
+    <p class="field-help">以通用直播源添加，重复地址自动跳过。代理继承全局设置，添加后可逐个修改。播放可用性取决于来源及当前网络。</p>
+    <p id="builtin-error" class="error" role="alert"></p><p id="builtin-result" role="status" hidden></p>
+    <div class="dialog-footer"><button type="button" class="outline close-dialog">关闭</button><button id="builtin-submit" type="submit" class="primary">添加所选频道</button></div>
   </form></dialog>
   <dialog id="subscription-dialog" aria-labelledby="subscription-dialog-title"><form id="subscription-form">
     <div class="dialog-heading"><h2 id="subscription-dialog-title">添加 M3U 订阅</h2><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div><input name="id" type="hidden">

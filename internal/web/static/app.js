@@ -6,6 +6,8 @@ let csrf = '';
 let toastTimer;
 let busy = false;
 let bulkSubmitting = false;
+let builtinSubmitting = false;
+let builtinSources = [];
 function toast(message, failed = false) {
   const el = $('#toast');
   el.textContent = message;
@@ -172,6 +174,8 @@ function editChannel(channel) {
   const managed = !!channel?.subscription_id;
   ['name', 'url', 'group', 'logo'].forEach(key => { form.elements.namedItem(key).readOnly = managed; });
   $('#channel-type').disabled = managed;
+  $('#channel-builtin-option').hidden = !!channel;
+  $('#channel-builtin-option').disabled = !!channel;
   $('#channel-managed').hidden = !managed;
   updateSourceFields('channel');
   $('details', form).open = false;
@@ -188,7 +192,107 @@ function updateSourceFields(prefix) {
     $('#bulk-text').placeholder = stream ? '新闻频道,https://example.com/live.m3u8\nhttps://example.com/channel.ts' : '中天新闻,https://www.youtube.com/watch?v=vr3XyVCR4T0\nhttps://youtu.be/V1p33hqPrUk';
   }
 }
-['channel', 'bulk'].forEach(prefix => $(`#${prefix}-type`).addEventListener('change', () => updateSourceFields(prefix)));
+['channel', 'bulk'].forEach(prefix => $(`#${prefix}-type`).addEventListener('change', () => {
+  if (prefix === 'channel' && $('#channel-type').value === 'builtin') {
+    $('#channel-type').value = 'stream';
+    updateSourceFields('channel');
+    perform(openBuiltinSources);
+    return;
+  }
+  updateSourceFields(prefix);
+}));
+async function openBuiltinSources() {
+  if (!builtinSources.length) {
+    const catalog = await api('/builtin-sources');
+    builtinSources = catalog.sources;
+  }
+  $('#builtin-form').reset();
+  const select = $('#builtin-source');
+  select.replaceChildren(...builtinSources.map(source => {
+    const option = node('option', '', source.name);
+    option.value = source.id;
+    return option;
+  }));
+  renderBuiltinSources();
+  $('#channel-dialog').close();
+  $('#builtin-dialog').showModal();
+}
+function renderBuiltinSources() {
+  const source = builtinSources.find(item => item.id === $('#builtin-source').value);
+  const list = $('#builtin-channels');
+  list.replaceChildren();
+  $('#builtin-error').textContent = '';
+  $('#builtin-result').hidden = true;
+  $('#builtin-description').textContent = source.description;
+  $('#builtin-website').href = source.website;
+  $('#builtin-group').value = source.name;
+  source.channels.forEach(channel => {
+    const row = node('div', 'builtin-channel');
+    const label = node('label', 'builtin-check');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = channel.id;
+    checkbox.checked = !!channel.selected;
+    checkbox.addEventListener('change', updateBuiltinCount);
+    const detail = node('span');
+    detail.append(node('strong', '', channel.name));
+    if (channel.note) detail.append(node('span', 'muted tiny', channel.note));
+    label.append(checkbox, detail);
+    const link = node('a', 'builtin-url', '原始 M3U8 ↗');
+    link.href = channel.url;
+    link.title = channel.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    row.append(label, link);
+    list.append(row);
+  });
+  updateBuiltinCount();
+}
+function updateBuiltinCount() {
+  const channels = $$('#builtin-channels input');
+  const count = channels.filter(channel => channel.checked).length;
+  $('#builtin-count').textContent = `已选择 ${count} / ${channels.length} 个频道`;
+  $('#builtin-submit').disabled = builtinSubmitting || count === 0;
+}
+$('#builtin-source').addEventListener('change', renderBuiltinSources);
+[['#builtin-select-all', true], ['#builtin-select-none', false]].forEach(([selector, checked]) => {
+  $(selector).addEventListener('click', () => {
+    $$('#builtin-channels input').forEach(channel => { channel.checked = checked; });
+    updateBuiltinCount();
+  });
+});
+$('#builtin-dialog').addEventListener('cancel', event => { if (builtinSubmitting) event.preventDefault(); });
+$('#builtin-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (builtinSubmitting || busy) return;
+  const source = builtinSources.find(item => item.id === $('#builtin-source').value);
+  const selected = new Set($$('#builtin-channels input:checked').map(input => input.value));
+  const channels = source.channels.filter(channel => selected.has(channel.id));
+  if (!channels.length) return;
+  const body = { source_type: 'stream', text: channels.map(channel => `${channel.name},${channel.url}`).join('\n'), group: $('#builtin-group').value.trim(), mode: $('#builtin-mode').value, quality: 0 };
+  const controls = $$('input, select, button', event.currentTarget);
+  builtinSubmitting = true;
+  busy = true;
+  controls.forEach(control => { control.disabled = true; });
+  $('#builtin-submit').textContent = '正在添加…';
+  $('#builtin-error').textContent = '';
+  $('#builtin-result').hidden = true;
+  try {
+    const result = await api('/channels/bulk', { method: 'POST', body });
+    $('#builtin-result').textContent = `已添加 ${result.added} 个 · 跳过 ${result.skipped} 个 · 失败 ${result.failed} 个`;
+    $('#builtin-result').hidden = false;
+    $('#builtin-error').textContent = result.results.filter(item => item.status === 'failed').map(item => `${item.name || '频道'}：${item.message}`).join('；');
+    try { await loadState({ background: true }); }
+    catch (error) { $('#builtin-error').textContent += ` 频道列表刷新失败：${error.message}`; }
+  } catch (error) { $('#builtin-error').textContent = error.message; }
+  finally {
+    controls.forEach(control => { control.disabled = false; });
+    $('#builtin-submit').textContent = '添加所选频道';
+    builtinSubmitting = false;
+    busy = false;
+    updateBuiltinCount();
+  }
+});
 function editSubscription(sub) {
   const form = $('#subscription-form');
   form.reset();

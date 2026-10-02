@@ -1,0 +1,24 @@
+#EXTM3U
+# 澳广视（TDM）官方电视直播地址；提取日期：2026-10-02。会议直播按节目安排提供。
+#EXTINF:-1 tvg-id="tdm-ctvp" group-title="澳视澳门",澳視澳門 91台
+https://live3.tdm.com.mo/ch1/ch1.live/playlist.m3u8
+#EXTINF:-1 tvg-id="tdm-ptvp" group-title="澳视澳门",澳視葡文 92台
+https://live3.tdm.com.mo/ch2/ch2.live/playlist.m3u8
+#EXTINF:-1 tvg-id="tdm-info" group-title="澳视澳门",澳門資訊 94台
+https://live3.tdm.com.mo/ch5/info_ch5.live/playlist.m3u8
+#EXTINF:-1 tvg-id="tdm-sports" group-title="澳视澳门",澳門體育 93台
+https://live3.tdm.com.mo/ch4/sport_ch4.live/playlist.m3u8
+#EXTINF:-1 tvg-id="tdm-hdctvp" group-title="澳视澳门",澳門綜藝 95台
+https://live3.tdm.com.mo/ch6/hd_ch6.live/playlist.m3u8
+#EXTINF:-1 tvg-id="tdm-satellite" group-title="澳视澳门",澳門-Macau 96台
+https://live3.tdm.com.mo/ch3/ch3.live/playlist.m3u8
+#EXTINF:-1 tvg-id="tdm-cgtn71" group-title="澳视澳门",CCTV 綜合頻道 71台
+https://live3.tdm.com.mo/cgtn/cgtn71/playlist.m3u8
+#EXTINF:-1 tvg-id="tdm-cgtn" group-title="澳视澳门",CGTN 73台
+https://live3.tdm.com.mo/cgtn/cgtn73/playlist.m3u8
+#EXTINF:-1 tvg-id="tdm-cgtn74" group-title="澳视澳门",CGTN 紀錄頻道 74台
+https://live3.tdm.com.mo/cgtn/cgtn74/playlist.m3u8
+#EXTINF:-1 tvg-id="tdm-legislativec" group-title="澳视澳门",立法會直播
+https://live3.tdm.com.mo/tv/ch21.live/playlist.m3u8
+#EXTINF:-1 tvg-id="tdm-legislativep" group-title="澳视澳门",Directo das Reuniões da Assembleia de Macau
+https://live3.tdm.com.mo/tv/ch22.live/playlist.m3u8
