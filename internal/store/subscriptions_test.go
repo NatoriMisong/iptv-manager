@@ -2,62 +2,13 @@ package store
 
 import (
 	"errors"
-	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"iptv-manager/internal/core"
 	"iptv-manager/internal/source"
 )
 
-func TestLegacySchemaAndBackupUpgrade(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before, _ := s.Export(testContext)
-	if err := s.SetAdminHash(testContext, strings.Repeat("x", 60)); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AddTraffic(testContext, "2026-10", 123); err != nil {
-		t.Fatal(err)
-	}
-	for _, stmt := range []string{`DROP INDEX channels_subscription_key`, `ALTER TABLE channels DROP COLUMN source_type`, `ALTER TABLE channels DROP COLUMN subscription_id`, `ALTER TABLE channels DROP COLUMN source_key`, `ALTER TABLE channels DROP COLUMN source_missing`, `DROP TABLE subscriptions`, `PRAGMA user_version=1`} {
-		if _, err := s.db.Exec(stmt); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s.Close()
-	s, err = Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-	if hash, err := s.AdminHash(testContext); err != nil || hash != strings.Repeat("x", 60) {
-		t.Fatal("migration changed admin hash")
-	}
-	if traffic, err := s.Traffic(testContext, "2026-10"); err != nil || traffic.Bytes != 123 {
-		t.Fatal("migration changed traffic")
-	}
-	after, err := s.Export(testContext)
-	if err != nil || !reflect.DeepEqual(before, after) {
-		t.Fatalf("migration modified channels: %+v %v", after, err)
-	}
-	legacy := before
-	legacy.Version = 1
-	for i := range legacy.Channels {
-		legacy.Channels[i].SourceType = ""
-	}
-	if err := s.Import(testContext, legacy); err != nil {
-		t.Fatal(err)
-	}
-	loaded, _ := s.Channels(testContext)
-	if len(loaded) != 2 || loaded[0].SourceType != "youtube" {
-		t.Fatalf("legacy backup: %+v", loaded)
-	}
-}
 func TestStreamChannelsAndBulk(t *testing.T) {
 	s := testStore(t)
 	ch, err := s.SaveChannel(testContext, core.Channel{Name: "通用", SourceType: "stream", URL: "https://cdn.example/live.m3u8?token=a%2Bb", Enabled: true, Quality: 720})

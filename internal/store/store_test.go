@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -145,6 +147,47 @@ func TestStableChannelIDs(t *testing.T) {
 	}
 }
 
+func TestUnsupportedSchemaIsNotModified(t *testing.T) {
+	for _, version := range []int{1, 3} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "iptv-manager.db")
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			for _, stmt := range []string{
+				`CREATE TABLE existing_data (value TEXT NOT NULL)`,
+				`INSERT INTO existing_data VALUES ('preserve this')`,
+				fmt.Sprintf("PRAGMA user_version = %d", version),
+			} {
+				if _, err := db.Exec(stmt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			opened, err := Open(path)
+			if err == nil {
+				opened.Close()
+				t.Fatal("unsupported schema accepted")
+			}
+			if !strings.Contains(err.Error(), "unsupported database schema") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var actualVersion, tables int
+			var value string
+			if err := db.QueryRow("PRAGMA user_version").Scan(&actualVersion); err != nil || actualVersion != version {
+				t.Fatalf("schema version modified: %d %v", actualVersion, err)
+			}
+			if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").Scan(&tables); err != nil || tables != 1 {
+				t.Fatalf("tables modified: %d %v", tables, err)
+			}
+			if err := db.QueryRow("SELECT value FROM existing_data").Scan(&value); err != nil || value != "preserve this" {
+				t.Fatalf("data modified: %q %v", value, err)
+			}
+		})
+	}
+}
+
 func TestReorderIsAtomic(t *testing.T) {
 	s := testStore(t)
 	before, _ := s.Channels(testContext)
@@ -169,7 +212,7 @@ func TestImportIsAtomicAndExcludesAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{"source", "duplicate-id", "duplicate-order", "settings", "version"} {
+	for _, bad := range []string{"source", "duplicate-id", "duplicate-order", "settings", "older-version", "newer-version"} {
 		t.Run(bad, func(t *testing.T) {
 			backup, _ := s.Export(testContext)
 			backup.Channels[0].Name = "would change"
@@ -182,7 +225,9 @@ func TestImportIsAtomicAndExcludesAdmin(t *testing.T) {
 				backup.Channels[1].SortOrder = backup.Channels[0].SortOrder
 			case "settings":
 				backup.Settings.BaseURL = "https://tv.example.com/subpath"
-			case "version":
+			case "older-version":
+				backup.Version = 1
+			case "newer-version":
 				backup.Version = 3
 			}
 			if err := s.Import(testContext, backup); !errors.Is(err, ErrValidation) {

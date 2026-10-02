@@ -4,7 +4,7 @@
 
 设计目标是 Linux x64、1 核 CPU、1 GB 内存、1–2 台观看设备。主程序使用 Go，配置保存在 SQLite；yt-dlp 仅用于 YouTube 功能。通用直播和 M3U 订阅完全跳过 yt-dlp，视频由 Go 流式转发，不运行 FFmpeg、不重新切片、不转码。
 
-当前本地测试与真实直播的验证边界见 [首版验证记录](docs/verification.md)。
+当前本地测试与真实直播的验证边界见 [验证记录](docs/verification.md)。
 
 ## 功能与边界
 
@@ -67,9 +67,11 @@ YouTube 功能的两个初始示例频道使用固定视频 ID：
 
 需要一台能访问所用直播源的 Linux x64 服务器（使用 YouTube 功能时还需能访问 YouTube），已安装 Docker Engine 和 Docker Compose 插件。程序通过 HTTP 提供服务，默认端口为 9000，可使用服务器 IP 或域名访问。使用域名时，A 记录应指向服务器；如果存在 AAAA 记录，IPv6 也需要正确可达。
 
-在项目目录中准备配置：
+获取项目并准备配置：
 
 ```bash
+git clone https://github.com/NatoriMisong/iptv-manager.git
+cd iptv-manager
 cp .env.example .env
 chmod 600 .env
 ```
@@ -93,6 +95,8 @@ docker compose logs --tail=100 app
 ```
 
 打开 `http://tv.example.com:9000`，使用 `.env` 中设置的初始密码登录。默认只启动应用容器，证书和 HTTPS 由使用者按需自行配置。
+
+默认 Compose 项目名为 `iptv-manager`，数据卷为 `iptv-manager_data`，数据库为 `/data/iptv-manager.db`。首次启动直接创建完整数据库结构并初始化管理密码、播放令牌和示例频道。按全新实例部署即可，无需保留其他项目的目录名或数据卷。
 
 查看或停止部署：
 
@@ -177,7 +181,7 @@ http://tv.example.com:9000/playlist.m3u?mode=direct&token=你的播放令牌
 {"text":"频道名称,https://youtu.be/vr3XyVCR4T0\nhttps://youtu.be/V1p33hqPrUk","group":"新闻","mode":"inherit","quality":0}
 ```
 
-通用源批量请求增加 `"source_type":"stream"`，URL 按完整地址去重并保留签名参数；省略类型时兼容旧版 YouTube 接口。
+`source_type` 可设为 `youtube`（默认）或 `stream`。通用源的 URL 按完整地址去重并保留签名参数。
 
 返回 `added`、`skipped`、`failed` 计数及 `results` 逐行结果（原始行号 `line`、`status`、`message`、名称、规范化链接和已有/新建的频道 ID）。单行失败以 HTTP 200 返回批次结果；请求整体无效返回 400，数据库错误返回 500。
 
@@ -249,9 +253,7 @@ socks5://proxy.example.com:1080
 
 解析器版本在镜像构建时锁定，运行中不自动执行 `yt-dlp -U` 或下载更新脚本。YouTube 规则变化时，先记录当前镜像版本并备份，再修改 Dockerfile/构建参数中的 yt-dlp 版本，重建镜像并测试两个频道。不要只升级运行中容器里的工具，否则无法可靠复现和回退。
 
-从 0.1.x 升级到 0.2.0：程序、模块和镜像名统一为 `iptv-manager`。先导出配置并备份原数据卷，再在原项目目录中重建。程序自动升级数据库结构，保留频道 ID、管理密码、播放令牌和设置；发现旧 `youtube-tv.db` 时继续使用它及其 WAL，新安装使用 `iptv-manager.db`。网页会话需重新登录。
-
-备份格式升级为版本 2，包含订阅关联，仍可导入版本 1 的 YouTube 配置；网页导入最大 32 MB。0.1.x 不能打开升级后的数据库，回退需要恢复升级前的数据备份。若同时改了服务器上的项目目录名，须保留原 Compose 项目名（`COMPOSE_PROJECT_NAME`）和数据卷，避免 Compose 创建新的空数据卷。
+程序仅使用 `DATA_DIR` 下的 `iptv-manager.db`，数据库结构版本为 2；新数据库直接初始化，不执行旧结构迁移。配置导入仅接受版本 2 的 IPTV Manager 备份，包含频道、订阅和设置，网页导入最大 32 MB。
 
 普通重建更新：
 

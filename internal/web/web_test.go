@@ -64,7 +64,7 @@ func (r *memoryRepo) SetAdminHash(_ context.Context, h string) error {
 	return nil
 }
 func (r *memoryRepo) Export(context.Context) (core.Backup, error) {
-	return core.Backup{Version: 1, Settings: r.settings, Channels: r.channels}, nil
+	return core.Backup{Version: 2, Settings: r.settings, Channels: r.channels}, nil
 }
 func (r *memoryRepo) Import(context.Context, core.Backup) error { r.changes++; return nil }
 func (r *memoryRepo) Traffic(_ context.Context, month string) (core.Traffic, error) {

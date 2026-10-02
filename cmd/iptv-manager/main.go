@@ -24,7 +24,7 @@ import (
 	"iptv-manager/internal/web"
 )
 
-var version = "0.2.0"
+var version = "0.2.1"
 
 func env(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
@@ -69,7 +69,7 @@ func run() error {
 		return errors.New("LOG_LEVEL 必须为 debug、info、warn 或 error")
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
-	db, err := store.Open(databasePath(env("DATA_DIR", "./data")))
+	db, err := store.Open(filepath.Join(env("DATA_DIR", "./data"), "iptv-manager.db"))
 	if err != nil {
 		return fmt.Errorf("打开 SQLite: %w", err)
 	}
@@ -189,16 +189,4 @@ func run() error {
 		return serveErr
 	}
 	return nil
-}
-
-// Reuse the legacy database in place, including its WAL, when upgrading.
-func databasePath(dir string) string {
-	current := filepath.Join(dir, "iptv-manager.db")
-	if _, err := os.Stat(current); os.IsNotExist(err) {
-		legacy := filepath.Join(dir, "youtube-tv.db")
-		if _, err := os.Stat(legacy); err == nil {
-			return legacy
-		}
-	}
-	return current
 }

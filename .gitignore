@@ -11,6 +11,3 @@ coverage.out
 cookies*.txt
 /iptv-manager-????-??-??.json
 /local-test/
-# Legacy names remain private when upgrading an existing checkout.
-/youtube-tv
-/youtube-tv-????-??-??.json

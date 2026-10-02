@@ -1,3 +1,5 @@
+name: iptv-manager
+
 services:
   app:
     image: iptv-manager:local
@@ -16,7 +18,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SECURE_COOKIES: auto
     volumes:
-      - app-data:/data
+      - data:/data
     read_only: true
     tmpfs:
       - /tmp:size=32m,mode=1777
@@ -34,4 +36,4 @@ services:
         max-file: "2"
 
 volumes:
-  app-data:
+  data:

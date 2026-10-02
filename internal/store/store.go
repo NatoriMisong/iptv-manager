@@ -72,7 +72,7 @@ func Open(path string) (*Store, error) {
 			return nil, err
 		}
 	}
-	if err := s.migrate(context.Background()); err != nil {
+	if err := s.initialize(context.Background()); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) migrate(ctx context.Context) error {
+func (s *Store) initialize(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -91,12 +91,13 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 2 {
-		return fmt.Errorf("database schema %d is newer than supported version 2", version)
+	if version != 0 && version != 2 {
+		return fmt.Errorf("unsupported database schema %d; IPTV Manager requires version 2 or a new database", version)
 	}
 	for _, stmt := range []string{
-		`CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, group_name TEXT NOT NULL, logo TEXT NOT NULL, enabled INTEGER NOT NULL, sort_order INTEGER NOT NULL, mode TEXT NOT NULL, quality INTEGER NOT NULL, proxy TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, group_name TEXT NOT NULL, logo TEXT NOT NULL, enabled INTEGER NOT NULL, sort_order INTEGER NOT NULL, mode TEXT NOT NULL, quality INTEGER NOT NULL, proxy TEXT NOT NULL, source_type TEXT NOT NULL, subscription_id TEXT NOT NULL DEFAULT '', source_key TEXT NOT NULL DEFAULT '', source_missing INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE INDEX IF NOT EXISTS channels_order ON channels(sort_order, id)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS channels_subscription_key ON channels(subscription_id,source_key) WHERE subscription_id<>''`,
 		`CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS traffic (month TEXT PRIMARY KEY, bytes INTEGER NOT NULL CHECK (bytes >= 0))`,
@@ -104,19 +105,6 @@ func (s *Store) migrate(ctx context.Context) error {
 	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return err
-		}
-	}
-	if version < 2 {
-		for _, stmt := range []string{
-			`ALTER TABLE channels ADD COLUMN source_type TEXT NOT NULL DEFAULT 'youtube'`,
-			`ALTER TABLE channels ADD COLUMN subscription_id TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE channels ADD COLUMN source_key TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE channels ADD COLUMN source_missing INTEGER NOT NULL DEFAULT 0`,
-			`CREATE UNIQUE INDEX channels_subscription_key ON channels(subscription_id,source_key) WHERE subscription_id<>''`,
-		} {
-			if _, err := tx.ExecContext(ctx, stmt); err != nil {
-				return err
-			}
 		}
 	}
 	var count int
@@ -381,7 +369,7 @@ func (s *Store) Export(ctx context.Context) (core.Backup, error) {
 }
 
 func (s *Store) Import(ctx context.Context, b core.Backup) error {
-	if b.Version != 1 && b.Version != 2 {
+	if b.Version != 2 {
 		return invalid("unsupported backup version")
 	}
 	if len(b.Channels) > 1000 {
@@ -397,9 +385,6 @@ func (s *Store) Import(ctx context.Context, b core.Backup) error {
 		return invalid("too many subscriptions")
 	}
 	for _, sub := range b.Subscriptions {
-		if b.Version == 1 {
-			return invalid("version 1 cannot contain subscriptions")
-		}
 		normalized, err := normalizeSubscription(sub)
 		if err != nil || normalized.ID == "" {
 			return invalid("invalid subscription")
