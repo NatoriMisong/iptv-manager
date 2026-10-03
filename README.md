@@ -312,7 +312,7 @@ docker compose up -d app
 
 ## 本地开发与检查
 
-需要 Go 1.24 或更高版本、Python、支持 JavaScript 的 yt-dlp 安装及 Node.js。项目 CI 和 Docker 构建使用明确的工具版本；本地开发建议与 Dockerfile 保持一致。SQLite 使用纯 Go 驱动，普通编译不需要系统 SQLite 或 C 编译器，竞态检查需要 Go 支持的 cgo/C 工具链。
+需要 Go 1.24 或更高版本、Python、支持 JavaScript 的 yt-dlp 安装及 Node.js。Docker 构建使用明确的工具版本；本地开发建议与 Dockerfile 保持一致。SQLite 使用纯 Go 驱动，普通编译不需要系统 SQLite 或 C 编译器，竞态检查需要 Go 支持的 cgo/C 工具链。
 
 首次本地运行可在终端临时设置密码，避免写入命令历史：
 
@@ -334,7 +334,7 @@ GOMAXPROCS=2 go test -race -p=1 ./...
 docker build -t iptv-manager:local .
 ```
 
-自动测试使用本地伪造来源与 HTTP 服务验证行为，不依赖实际 YouTube 或电视台网络，也不证明具体直播在目标服务器可用。普通编译不需要 C 编译器；`go test -race` 需要 cgo 工具链，CI 已配置竞态检测和 Docker 构建。
+自动测试使用本地伪造来源与 HTTP 服务验证行为，不依赖实际 YouTube 或电视台网络，也不证明具体直播在目标服务器可用。普通编译不需要 C 编译器；`go test -race` 需要 cgo 工具链。项目没有托管 CI，提交前在本地运行上述检查和 Docker 构建。
 
 ### 部署后验收
 
