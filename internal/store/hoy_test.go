@@ -18,7 +18,7 @@ func TestHOYBuiltinDefaultsDeduplicationAndBackup(t *testing.T) {
 	}
 	for i, item := range result.Results {
 		ch, err := s.Channel(testContext, item.ChannelID)
-		if err != nil || ch.ProviderID != "hoy" || ch.ProviderChannelID != req.ChannelIDs[i] || ch.URL != "https://hoy.tv/live?channel_no="+req.ChannelIDs[i] || ch.Mode != "relay" || ch.Proxy != "inherit" || ch.Group != "HOY" || !ch.Enabled {
+		if err != nil || ch.ProviderID != "hoy" || ch.ProviderChannelID != req.ChannelIDs[i] || ch.URL != "https://hoy.tv/live?channel_no="+req.ChannelIDs[i] || ch.Mode != "relay" || ch.Proxy != core.DirectProxy || ch.Group != "HOY" || !ch.Enabled {
 			t.Fatalf("HOY defaults lost: %+v %v", ch, err)
 		}
 		ch.Name = "自定义 " + ch.ProviderChannelID

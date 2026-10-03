@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"iptv-manager/internal/core"
-	"iptv-manager/internal/provider"
 	_ "modernc.org/sqlite"
 )
 
@@ -92,8 +91,8 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version != 0 && version != 2 && version != 3 {
-		return fmt.Errorf("unsupported database schema %d; IPTV Manager requires version 2, version 3 or a new database", version)
+	if version != 0 && version != 3 && version != 4 {
+		return fmt.Errorf("unsupported database schema %d; IPTV Manager requires version 3, version 4 or a new database", version)
 	}
 	for _, stmt := range []string{
 		`CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, group_name TEXT NOT NULL, logo TEXT NOT NULL, enabled INTEGER NOT NULL, sort_order INTEGER NOT NULL, mode TEXT NOT NULL, quality INTEGER NOT NULL, proxy TEXT NOT NULL, source_type TEXT NOT NULL, subscription_id TEXT NOT NULL DEFAULT '', source_key TEXT NOT NULL DEFAULT '', source_missing INTEGER NOT NULL DEFAULT 0, provider_id TEXT NOT NULL DEFAULT '', provider_channel_id TEXT NOT NULL DEFAULT '')`,
@@ -108,8 +107,8 @@ func (s *Store) initialize(ctx context.Context) error {
 			return err
 		}
 	}
-	if version == 2 {
-		if err := migrateProviders(ctx, tx); err != nil {
+	if version == 3 {
+		if err := migrateProxies(ctx, tx); err != nil {
 			return err
 		}
 	}
@@ -122,7 +121,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		settings := core.Settings{DefaultMode: "relay", DefaultQuality: 720, UpstreamProxy: "direct", MonthlyBudgetGB: 800, PlaybackToken: token}
+		settings := completeSettings(core.Settings{DefaultMode: "relay", DefaultQuality: 720, MonthlyBudgetGB: 800, PlaybackToken: token})
 		data, err := json.Marshal(settings)
 		if err != nil {
 			return err
@@ -135,13 +134,13 @@ func (s *Store) initialize(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			ch := core.Channel{ID: id, Name: source.name, URL: "https://www.youtube.com/watch?v=" + source.id, SourceType: "youtube", Group: "新闻", Enabled: true, SortOrder: i, Mode: "inherit", Proxy: "inherit"}
+			ch := core.Channel{ID: id, Name: source.name, URL: "https://www.youtube.com/watch?v=" + source.id, SourceType: "youtube", Group: "新闻", Enabled: true, SortOrder: i, Mode: "inherit", Proxy: core.DirectProxy}
 			if err := insertChannel(ctx, tx, ch); err != nil {
 				return err
 			}
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 3`); err != nil {
+	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 4`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -192,9 +191,16 @@ func (s *Store) SaveChannel(ctx context.Context, ch core.Channel) (core.Channel,
 		return ch, err
 	}
 	defer tx.Rollback()
+	settings, err := readSettings(ctx, tx)
+	if err != nil {
+		return ch, err
+	}
 	if ch.ID == "" {
 		ch, err = normalizeChannel(ch)
 		if err != nil {
+			return ch, err
+		}
+		if err := checkProxyRef(settings, ch.Proxy); err != nil {
 			return ch, err
 		}
 		if err := checkChannelCapacity(ctx, tx, 1); err != nil {
@@ -228,7 +234,9 @@ func (s *Store) SaveChannel(ctx context.Context, ch core.Channel) (core.Channel,
 		if err != nil {
 			return ch, err
 		}
-
+		if err := checkProxyRef(settings, ch.Proxy); err != nil {
+			return ch, err
+		}
 		if err := tx.QueryRowContext(ctx, `SELECT sort_order FROM channels WHERE id=?`, ch.ID).Scan(&ch.SortOrder); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ch, ErrNotFound
@@ -303,13 +311,7 @@ func (s *Store) Reorder(ctx context.Context, ids []string) error {
 }
 
 func (s *Store) Settings(ctx context.Context) (core.Settings, error) {
-	var settings core.Settings
-	var data string
-	if err := s.db.QueryRowContext(ctx, `SELECT payload FROM settings WHERE id=1`).Scan(&data); err != nil {
-		return settings, err
-	}
-	err := json.Unmarshal([]byte(data), &settings)
-	return settings, err
+	return readSettings(ctx, s.db)
 }
 
 func (s *Store) SaveSettings(ctx context.Context, settings core.Settings) error {
@@ -349,12 +351,9 @@ func (s *Store) Export(ctx context.Context) (core.Backup, error) {
 		return core.Backup{}, err
 	}
 	defer tx.Rollback()
-	b := core.Backup{Version: 3, Channels: make([]core.Channel, 0)}
-	var payload string
-	if err := tx.QueryRowContext(ctx, `SELECT payload FROM settings WHERE id=1`).Scan(&payload); err != nil {
-		return b, err
-	}
-	if err := json.Unmarshal([]byte(payload), &b.Settings); err != nil {
+	b := core.Backup{Version: 4, Channels: make([]core.Channel, 0)}
+	b.Settings, err = readSettings(ctx, tx)
+	if err != nil {
 		return b, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+channelFields+` FROM channels ORDER BY sort_order,id`)
@@ -384,11 +383,21 @@ func (s *Store) Export(ctx context.Context) (core.Backup, error) {
 }
 
 func (s *Store) Import(ctx context.Context, b core.Backup) error {
-	if b.Version != 2 && b.Version != 3 {
+	if b.Version != 3 && b.Version != 4 {
 		return invalid("unsupported backup version")
 	}
 	if len(b.Channels) > 1000 {
 		return invalid("backup exceeds the 1000-channel limit")
+	}
+	if len(b.Subscriptions) > 20 {
+		return invalid("too many subscriptions")
+	}
+	var err error
+	if b.Version == 3 {
+		b.Settings, b.Channels, b.Subscriptions, err = convertLegacyProxies(b.Settings, append([]core.Channel(nil), b.Channels...), append([]core.Subscription(nil), b.Subscriptions...))
+		if err != nil {
+			return err
+		}
 	}
 	settings, err := normalizeSettings(b.Settings)
 	if err != nil {
@@ -396,13 +405,13 @@ func (s *Store) Import(ctx context.Context, b core.Backup) error {
 	}
 	channels := make([]core.Channel, len(b.Channels))
 	subs := make(map[string]core.Subscription)
-	if len(b.Subscriptions) > 20 {
-		return invalid("too many subscriptions")
-	}
 	for _, sub := range b.Subscriptions {
 		normalized, err := normalizeSubscription(sub)
 		if err != nil || normalized.ID == "" {
 			return invalid("invalid subscription")
+		}
+		if err := checkProxyRef(settings, normalized.Proxy); err != nil {
+			return invalid("subscription references a missing proxy")
 		}
 		if _, exists := subs[sub.ID]; exists {
 			return invalid("duplicate subscription ID")
@@ -413,11 +422,11 @@ func (s *Store) Import(ctx context.Context, b core.Backup) error {
 	seen := make(map[string]bool, len(channels))
 	orders := make(map[int]bool, len(channels))
 	for i, source := range b.Channels {
-		if b.Version == 2 {
-			source = provider.UpgradeLegacy(source)
-		}
 		ch, err := normalizeChannel(source)
 		if err != nil {
+			return fmt.Errorf("channel %d: %w", i+1, err)
+		}
+		if err := checkProxyRef(settings, ch.Proxy); err != nil {
 			return fmt.Errorf("channel %d: %w", i+1, err)
 		}
 		if ch.SubscriptionID != "" {

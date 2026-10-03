@@ -49,9 +49,18 @@ func (r *memoryRepo) SaveSubscription(_ context.Context, sub core.Subscription) 
 	return sub, nil
 }
 func (r *memoryRepo) DeleteSubscription(context.Context, string) error { r.changes++; return nil }
-func (r *memoryRepo) DeleteChannel(context.Context, string) error      { r.changes++; return nil }
-func (r *memoryRepo) Reorder(context.Context, []string) error          { r.changes++; return nil }
-func (r *memoryRepo) Settings(context.Context) (core.Settings, error)  { return r.settings, nil }
+func (r *memoryRepo) SaveProxy(_ context.Context, p core.Proxy) (core.Proxy, error) {
+	r.changes++
+	if p.ID == "" {
+		p.ID = "0123456789abcdef01234567"
+	}
+	return p, nil
+}
+func (r *memoryRepo) DeleteProxy(context.Context, string) error              { r.changes++; return nil }
+func (r *memoryRepo) SetProviderProxy(context.Context, string, string) error { r.changes++; return nil }
+func (r *memoryRepo) DeleteChannel(context.Context, string) error            { r.changes++; return nil }
+func (r *memoryRepo) Reorder(context.Context, []string) error                { r.changes++; return nil }
+func (r *memoryRepo) Settings(context.Context) (core.Settings, error)        { return r.settings, nil }
 func (r *memoryRepo) SaveSettings(_ context.Context, s core.Settings) error {
 	r.settings = s
 	r.changes++
@@ -64,7 +73,7 @@ func (r *memoryRepo) SetAdminHash(_ context.Context, h string) error {
 	return nil
 }
 func (r *memoryRepo) Export(context.Context) (core.Backup, error) {
-	return core.Backup{Version: 2, Settings: r.settings, Channels: r.channels}, nil
+	return core.Backup{Version: 4, Settings: r.settings, Channels: r.channels}, nil
 }
 func (r *memoryRepo) Import(context.Context, core.Backup) error { r.changes++; return nil }
 func (r *memoryRepo) Traffic(_ context.Context, month string) (core.Traffic, error) {

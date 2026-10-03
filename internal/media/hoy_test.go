@@ -223,13 +223,14 @@ func TestHOYManualRefreshAndProxyChangeInvalidateOldResources(t *testing.T) {
 					t.Fatal("manual refresh retained cache or eagerly resolved")
 				}
 			} else {
-				repo.settings.UpstreamProxy = "socks5://proxy.example:1080"
+				repo.settings.Proxies = []core.Proxy{{ID: "0123456789abcdef01234567", Name: "测试代理", Scheme: "socks5", Host: "proxy.example", Port: 1080}}
+				repo.settings.ProviderProxies = map[string]string{"hoy": "0123456789abcdef01234567"}
 			}
 			resp, _ := integrationGet(t, local.Client(), hoyWatch(local, "77"), nil)
 			if resp.StatusCode != 200 || f.calls("77") != 2 {
 				t.Fatal("session not replaced")
 			}
-			if scenario == "proxy" && (len(proxies) != 2 || proxies[1] != repo.settings.UpstreamProxy) {
+			if scenario == "proxy" && (len(proxies) != 2 || proxies[1] != "socks5://proxy.example:1080") {
 				t.Fatal("new proxy not used")
 			}
 			for _, old := range []string{track, part} {

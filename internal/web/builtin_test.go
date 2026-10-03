@@ -75,7 +75,7 @@ func TestBuiltinSourcesImportThroughBulkAPI(t *testing.T) {
 		}
 		for i, item := range result.Results {
 			channel, err := repo.Channel(ctx, item.ChannelID)
-			if err != nil || channel.SourceType != kind || channel.ProviderID != source.ID || channel.ProviderChannelID != source.Channels[i].ID || channel.Mode != "direct" || channel.Proxy != "inherit" || channel.Group != source.Name || channel.Name != source.Channels[i].Name || channel.URL != source.Channels[i].URL {
+			if err != nil || channel.SourceType != kind || channel.ProviderID != source.ID || channel.ProviderChannelID != source.Channels[i].ID || channel.Mode != "direct" || channel.Proxy != core.DirectProxy || channel.Group != source.Name || channel.Name != source.Channels[i].Name || channel.URL != source.Channels[i].URL {
 				t.Fatalf("invalid imported channel: %+v %v", channel, err)
 			}
 		}

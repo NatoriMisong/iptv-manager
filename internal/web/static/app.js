@@ -47,6 +47,8 @@ async function loadState({ background = false } = {}) {
   renderChannels();
   renderStats();
   renderSubscriptions();
+  renderBuiltinPage();
+  renderProxies();
   $('#version').textContent = next.version ? `v${next.version.replace(/^v/, '')}` : '';
   if (!background) fillSettings();
 }
@@ -120,6 +122,7 @@ function renderChannels() {
     const effectiveMode = ch.mode === 'inherit' ? state.settings.default_mode : ch.mode;
     mode.append(node('span', 'badge', effectiveMode === 'direct' ? '客户端直连' : '服务器中继'));
     if (ch.mode === 'inherit') mode.append(node('div', 'channel-meta', '继承全局'));
+    mode.append(node('div', 'channel-meta', `代理：${proxyLabel(channelProxyRef(ch))}`));
     const originalQuality = ch.source_type !== 'youtube';
     const quality = node('td', '', originalQuality ? '原始画质' : `${ch.quality || state.settings.default_quality}p`);
     if (!ch.quality && !originalQuality) quality.append(node('div', 'channel-meta', '继承全局'));
@@ -172,10 +175,13 @@ function editChannel(channel) {
   form.reset();
   $('#channel-error').textContent = '';
   $('#channel-dialog-title').textContent = channel ? '编辑频道' : '添加频道';
-  const data = channel || { id: '', source_type: 'stream', name: '', url: '', group: '', logo: '', enabled: true, mode: 'inherit', quality: 0, proxy: 'inherit', sort_order: state.channels?.length || 0 };
+  const data = channel || { id: '', source_type: 'stream', name: '', url: '', group: '', logo: '', enabled: true, mode: 'inherit', quality: 0, proxy: 'direct', sort_order: state.channels?.length || 0 };
   Object.entries(data).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
+  fillProxySelect($('#channel-proxy'), data.proxy);
   const managed = !!channel?.subscription_id;
   const builtin = channel?.source_type === 'builtin';
+  $('#channel-proxy-field').hidden = builtin;
+  $('#channel-proxy-note').hidden = !builtin;
   ['name', 'url', 'group', 'logo'].forEach(key => { form.elements.namedItem(key).readOnly = managed; });
   $('#channel-url').readOnly = managed || builtin;
   $('#channel-type').disabled = managed || builtin;
@@ -215,7 +221,7 @@ function updateSourceFields(prefix) {
   }
   updateSourceFields(prefix);
 }));
-async function openBuiltinSources() {
+async function openBuiltinSources(sourceId) {
   if (!builtinSources.length) {
     const catalog = await api('/builtin-sources');
     builtinSources = catalog.sources;
@@ -227,6 +233,7 @@ async function openBuiltinSources() {
     option.value = source.id;
     return option;
   }));
+  if (typeof sourceId === 'string') select.value = sourceId;
   renderBuiltinSources();
   $('#channel-dialog').close();
   $('#builtin-dialog').showModal();
@@ -312,8 +319,9 @@ $('#builtin-form').addEventListener('submit', async event => {
 function editSubscription(sub) {
   const form = $('#subscription-form');
   form.reset();
-  const data = sub || { id: '', name: '', url: '', proxy: 'inherit', interval_minutes: 60, enabled: true };
+  const data = sub || { id: '', name: '', url: '', proxy: 'direct', interval_minutes: 60, enabled: true };
   Object.entries(data).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
+  fillProxySelect($('#subscription-proxy'), data.proxy);
   $('#subscription-error').textContent = '';
   $('#subscription-dialog-title').textContent = sub ? '编辑 M3U 订阅' : '添加 M3U 订阅';
   $('#subscription-dialog').showModal();
@@ -418,6 +426,7 @@ $('#add-channel').addEventListener('click', () => editChannel());
 $('#empty-add').addEventListener('click', () => editChannel());
 $('#bulk-add').addEventListener('click', () => {
   $('#bulk-form').reset();
+  fillProxySelect($('#bulk-proxy'), 'direct');
   $('#bulk-error').textContent = '';
   $('#bulk-results').hidden = true;
   $('#bulk-result-list').replaceChildren();
@@ -456,9 +465,7 @@ $('#bulk-form').addEventListener('submit', async event => {
 });
 $$('[data-view]').forEach(button => button.addEventListener('click', () => {
   $$('[data-view]').forEach(b => b.classList.toggle('active', b === button));
-  $('#view-channels').hidden = button.dataset.view !== 'channels';
-  $('#view-settings').hidden = button.dataset.view !== 'settings';
-  $('#view-subscriptions').hidden = button.dataset.view !== 'subscriptions';
+  ['channels', 'subscriptions', 'builtin', 'proxies', 'settings'].forEach(view => { $(`#view-${view}`).hidden = button.dataset.view !== view; });
 }));
 $$('.close-dialog').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
 $$('[data-subscription]').forEach(button => button.addEventListener('click', () => copySubscription(button.dataset.subscription)));
@@ -469,7 +476,7 @@ $('#channel-form').addEventListener('submit', async event => {
   data.enabled = data.enabled === 'true';
   data.quality = Number(data.quality);
   data.sort_order = Number(data.sort_order);
-  data.proxy = data.proxy.trim() || 'inherit';
+  data.proxy = data.proxy || 'direct';
   const button = $('button[type="submit"]', event.currentTarget);
   button.disabled = true;
   $('#channel-error').textContent = '';
@@ -487,7 +494,7 @@ $('#subscription-form').addEventListener('submit', async event => {
   const data = Object.fromEntries(new FormData(event.currentTarget));
   data.interval_minutes = Number(data.interval_minutes);
   data.enabled = data.enabled === 'true';
-  data.proxy = data.proxy.trim() || 'inherit';
+  data.proxy = data.proxy || 'direct';
   const button = $('button[type="submit"]', event.currentTarget);
   button.disabled = true; $('#subscription-error').textContent = '';
   try {
@@ -507,7 +514,6 @@ $('#settings-form').addEventListener('submit', async event => {
   const data = Object.fromEntries(new FormData(event.currentTarget));
   data.default_quality = Number(data.default_quality);
   data.monthly_budget_gb = Number(data.monthly_budget_gb);
-  data.upstream_proxy = data.upstream_proxy.trim() || 'direct';
   const button = $('button[type="submit"]', event.currentTarget);
   button.disabled = true;
   $('#settings-error').textContent = '';
@@ -563,3 +569,152 @@ setInterval(() => {
   if (!state || document.hidden || $$('dialog[open]').length || busy) return;
   loadState({ background: true }).catch(() => {});
 }, 20000);
+
+const proxyTests = new Map();
+function proxyAddress(p) {
+  const host = p.host.includes(':') ? `[${p.host}]` : p.host;
+  return `${p.scheme}://${host}:${p.port}`;
+}
+function proxyLabel(ref) {
+  if (!ref || ref === 'direct') return '直连';
+  return (state.settings.proxies || []).find(p => p.id === ref)?.name || '已删除的代理';
+}
+function channelProxyRef(ch) {
+  if (ch.source_type === 'builtin') return state.settings.provider_proxies?.[ch.provider_id] || 'direct';
+  return ch.proxy || 'direct';
+}
+function fillProxySelect(select, value) {
+  const direct = node('option', '', '直连（不使用代理）');
+  direct.value = 'direct';
+  select.replaceChildren(direct, ...(state.settings.proxies || []).map(p => {
+    const option = node('option', '', `${p.name} · ${proxyAddress(p)}`);
+    option.value = p.id;
+    return option;
+  }));
+  select.value = value && [...select.options].some(option => option.value === value) ? value : 'direct';
+}
+function proxyUsage(ref) {
+  const channels = (state.channels || []).filter(ch => ch.source_type !== 'builtin' && (ch.proxy || 'direct') === ref).length;
+  const subscriptions = (state.subscriptions || []).filter(sub => (sub.proxy || 'direct') === ref).length;
+  const providers = Object.values(state.settings.provider_proxies || {}).filter(value => (value || 'direct') === ref).length;
+  return `${channels} 个频道 · ${subscriptions} 个订阅 · ${providers} 个内置直播源`;
+}
+function renderBuiltinPage() {
+  const list = $('#builtin-list');
+  list.replaceChildren();
+  builtinSources.forEach(source => {
+    const card = node('article', 'panel settings-card');
+    const head = node('div', 'card-head');
+    const title = node('div');
+    title.append(node('h2', '', source.name), node('p', 'muted', source.description || ''));
+    const added = (state.channels || []).filter(ch => ch.source_type === 'builtin' && ch.provider_id === source.id).length;
+    head.append(title, node('span', 'badge', `已添加 ${added} / ${source.channels.length} 个频道`));
+    card.append(head);
+    if (source.playback_help) card.append(node('p', 'field-help', source.playback_help));
+    const row = node('div', 'builtin-proxy');
+    const label = node('label', '', '出站代理');
+    label.htmlFor = `provider-proxy-${source.id}`;
+    const select = document.createElement('select');
+    select.id = label.htmlFor;
+    fillProxySelect(select, state.settings.provider_proxies?.[source.id] || 'direct');
+    select.addEventListener('change', () => perform(async () => {
+      select.disabled = true;
+      try {
+        await api(`/providers/${encodeURIComponent(source.id)}/proxy`, { method: 'PUT', body: { proxy: select.value } });
+        await loadState({ background: true });
+        toast(`${source.name} 的代理已更新，下次播放时生效`);
+      } finally { select.disabled = false; }
+    }));
+    row.append(label, select, node('p', 'muted tiny', '该来源的所有频道共用此代理：解析播放地址、获取清单和中继分片都经过它。'));
+    card.append(row);
+    const buttons = node('div', 'subscription-buttons');
+    buttons.append(action('添加频道', `添加 ${source.name} 频道`, () => openBuiltinSources(source.id), 'outline'));
+    if (source.website) {
+      const link = node('a', 'builtin-url', source.link_label ? '官方网站 ↗' : '官方网站 ↗');
+      link.href = source.website;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      buttons.append(link);
+    }
+    card.append(buttons);
+    list.append(card);
+  });
+}
+function renderProxies() {
+  const list = $('#proxy-list');
+  list.replaceChildren();
+  const direct = node('article', 'panel settings-card');
+  const directHead = node('div', 'card-head');
+  const directTitle = node('div');
+  directTitle.append(node('h2', '', '直连'), node('p', 'muted', '不使用代理，服务器直接访问直播来源。新频道和新订阅默认直连。'));
+  directHead.append(directTitle, node('span', 'badge', '固定选项'));
+  direct.append(directHead, node('p', 'field-help', `使用中：${proxyUsage('direct')}`));
+  list.append(direct);
+  const proxies = state.settings.proxies || [];
+  proxies.forEach(p => {
+    const card = node('article', 'panel settings-card');
+    const head = node('div', 'card-head');
+    const title = node('div');
+    title.append(node('h2', '', p.name), node('p', 'proxy-address', proxyAddress(p) + (p.username ? ` · 用户名 ${p.username}` : '')));
+    head.append(title, node('span', 'badge', p.scheme.toUpperCase()));
+    card.append(head, node('p', 'field-help', `使用中：${proxyUsage(p.id)}`));
+    const outcome = proxyTests.get(p.id);
+    const result = node('p', `proxy-test field-help ${outcome?.status || ''}`.trim(), outcome?.text || '');
+    result.setAttribute('role', 'status');
+    card.append(result);
+    const buttons = node('div', 'subscription-buttons');
+    const test = node('button', 'outline', outcome?.status === 'running' ? '测试中…' : '测试');
+    test.type = 'button';
+    test.disabled = outcome?.status === 'running';
+    test.addEventListener('click', () => testProxy(p));
+    buttons.append(test, action('编辑', `编辑代理 ${p.name}`, () => editProxy(p)), action('删除', `删除代理 ${p.name}`, async () => {
+      if (!confirm(`删除代理「${p.name}」？正在使用它的频道、订阅或内置直播源会阻止删除。`)) return;
+      await api(`/proxies/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
+      proxyTests.delete(p.id);
+      await loadState({ background: true });
+      toast('代理已删除');
+    }, 'quiet danger'));
+    card.append(buttons);
+    list.append(card);
+  });
+  if (!proxies.length) list.append(node('p', 'muted tiny', '尚未添加代理。点击右上角“添加代理”，然后在频道、订阅或内置直播源中选择它。'));
+}
+async function testProxy(p) {
+  if (proxyTests.get(p.id)?.status === 'running') return;
+  proxyTests.set(p.id, { status: 'running', text: '正在通过代理访问 ipip.info…' });
+  renderProxies();
+  try {
+    const outcome = await api(`/proxies/${encodeURIComponent(p.id)}/test`, { method: 'POST' });
+    proxyTests.set(p.id, { status: 'ok', text: `出口 IP ${outcome.ip} · ${outcome.elapsed_ms} ms` });
+  } catch (error) {
+    proxyTests.set(p.id, { status: 'failed', text: `测试失败：${error.message}` });
+  }
+  renderProxies();
+}
+function editProxy(p) {
+  const form = $('#proxy-form');
+  form.reset();
+  $('#proxy-error').textContent = '';
+  $('#proxy-dialog-title').textContent = p ? '编辑代理' : '添加代理';
+  const data = p || { id: '', name: '', scheme: 'socks5', host: '', port: 1080, username: '', password: '' };
+  Object.entries(data).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
+  $('#proxy-dialog').showModal();
+  $('#proxy-name').focus();
+}
+$('#add-proxy').addEventListener('click', () => editProxy());
+$('#proxy-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(event.currentTarget));
+  data.port = Number(data.port);
+  const button = $('button[type="submit"]', event.currentTarget);
+  button.disabled = true;
+  $('#proxy-error').textContent = '';
+  try {
+    await api(data.id ? `/proxies/${encodeURIComponent(data.id)}` : '/proxies', { method: data.id ? 'PUT' : 'POST', body: data });
+    $('#proxy-dialog').close();
+    proxyTests.delete(data.id);
+    await loadState({ background: true });
+    toast(data.id ? '代理已更新，使用它的频道将重新连接' : '代理已保存，可在频道、订阅或内置直播源中选择');
+  } catch (error) { $('#proxy-error').textContent = error.message; }
+  finally { button.disabled = false; }
+});

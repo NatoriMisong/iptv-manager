@@ -110,8 +110,9 @@ func TestExtractorFailureLogsUsefulSanitizedDiagnostics(t *testing.T) {
 		return nil, []byte("ERROR: Sign in to confirm you’re not a bot; HTTP Error 403\nproxy http://proxy-user:proxy-password@proxy.example:8080\nCookie: SID=cookie-secret\nAuthorization: Bearer bearer-secret\nsource https://manifest.googlevideo.com/expire/999/signature/hidden-signature/index.m3u8\ntoken=token-secret"), errors.New("failed process")
 	}
 	ch := testChannel("one")
-	ch.Proxy = "http://proxy-user:proxy-password@proxy.example:8080"
-	_, err := r.Resolve(context.Background(), ch, core.Settings{})
+	ch.Proxy = "0123456789abcdef01234567"
+	settings := core.Settings{Proxies: []core.Proxy{{ID: ch.Proxy, Name: "代理", Scheme: "http", Host: "proxy.example", Port: 8080, Username: "proxy-user", Password: "proxy-password"}}}
+	_, err := r.Resolve(context.Background(), ch, settings)
 	if err == nil || !strings.Contains(err.Error(), "额外验证") {
 		t.Fatalf("unexpected error: %v", err)
 	}

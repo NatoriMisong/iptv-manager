@@ -25,6 +25,15 @@ func (s *Store) AddChannels(ctx context.Context, req core.BulkChannelRequest) (c
 		return core.BulkChannelResult{}, err
 	}
 	defer tx.Rollback()
+	settings, err := readSettings(ctx, tx)
+	if err != nil {
+		return core.BulkChannelResult{}, err
+	}
+	for _, ch := range channels {
+		if err := checkProxyRef(settings, ch.Proxy); err != nil {
+			return core.BulkChannelResult{}, err
+		}
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+channelFields+` FROM channels ORDER BY sort_order,id`)
 	if err != nil {
 		return core.BulkChannelResult{}, err
@@ -115,6 +124,10 @@ func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []c
 	if !validQuality(req.Quality, true) {
 		return core.BulkChannelResult{}, nil, invalid("不支持此画质上限")
 	}
+	proxy, err := proxyRef(req.Proxy)
+	if err != nil {
+		return core.BulkChannelResult{}, nil, err
+	}
 	result := core.BulkChannelResult{Results: make([]core.BulkChannelItem, 0)}
 	channels := make([]core.Channel, 0)
 	content := strings.TrimPrefix(req.Text, "\uFEFF")
@@ -127,7 +140,7 @@ func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []c
 		if len(result.Results) == maxBulkChannels {
 			return core.BulkChannelResult{}, nil, invalid("每批最多添加 100 行频道，请分批提交")
 		}
-		ch := core.Channel{URL: raw, SourceType: req.SourceType, Group: req.Group, Mode: req.Mode, Quality: req.Quality, Enabled: true, Proxy: "inherit"}
+		ch := core.Channel{URL: raw, SourceType: req.SourceType, Group: req.Group, Mode: req.Mode, Quality: req.Quality, Enabled: true, Proxy: proxy}
 		named := false
 		// Do not split commas inside a bare URL's query string.
 		if !strings.HasPrefix(raw, "https://") && !strings.HasPrefix(raw, "http://") {

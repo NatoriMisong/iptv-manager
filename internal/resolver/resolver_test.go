@@ -18,7 +18,7 @@ import (
 )
 
 func testChannel(id string) core.Channel {
-	return core.Channel{ID: id, URL: "https://www.youtube.com/watch?v=vr3XyVCR4T0", Quality: 720, Proxy: "inherit"}
+	return core.Channel{ID: id, URL: "https://www.youtube.com/watch?v=vr3XyVCR4T0", Quality: 720, Proxy: core.DirectProxy}
 }
 
 func liveData(raw string) []byte {
@@ -142,11 +142,12 @@ func TestSourceExpiration(t *testing.T) {
 
 func TestArgumentsProxyAndWarnings(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://must-not-inherit.example:1234")
-	for _, test := range []struct{ name, channelProxy, globalProxy, want string }{
-		{"direct", "direct", "http://proxy.example:8000", ""},
-		{"inherit-empty", "inherit", "", ""},
-		{"inherit", "inherit", "socks5://proxy.example:1080", "socks5://proxy.example:1080"},
-		{"override", "http://other.example:8000", "http://proxy.example:8000", "http://other.example:8000"},
+	const proxyID = "0123456789abcdef01234567"
+	settings := core.Settings{Proxies: []core.Proxy{{ID: proxyID, Name: "测试代理", Scheme: "socks5", Host: "proxy.example", Port: 1080}}}
+	for _, test := range []struct{ name, channelProxy, want string }{
+		{"direct", "direct", ""},
+		{"empty", "", ""},
+		{"named", proxyID, "socks5://proxy.example:1080"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			r := New(Options{JSRuntime: "deno"})
@@ -157,7 +158,7 @@ func TestArgumentsProxyAndWarnings(t *testing.T) {
 			}
 			ch := testChannel("one")
 			ch.Proxy = test.channelProxy
-			_, err := r.Resolve(context.Background(), ch, core.Settings{UpstreamProxy: test.globalProxy})
+			_, err := r.Resolve(context.Background(), ch, settings)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -476,6 +477,19 @@ func TestInvalidationPreventsOldInFlightCache(t *testing.T) {
 	}
 }
 
+func TestDanglingProxyReferenceFailsClosed(t *testing.T) {
+	r := New(Options{})
+	r.run = func(context.Context, string, []string) ([]byte, []byte, error) {
+		t.Fatal("yt-dlp started without a usable proxy")
+		return nil, nil, nil
+	}
+	ch := testChannel("dangling")
+	ch.Proxy = "ffffffffffffffffffffffff"
+	if _, err := r.Resolve(context.Background(), ch, core.Settings{}); err == nil {
+		t.Fatal("missing proxy resolved as a direct connection")
+	}
+}
+
 func TestSourceAndProxyChangesDoNotReuseCache(t *testing.T) {
 	r := New(Options{})
 	var calls atomic.Int32
@@ -487,10 +501,11 @@ func TestSourceAndProxyChangesDoNotReuseCache(t *testing.T) {
 	_, _ = r.Resolve(context.Background(), ch, core.Settings{})
 	ch.URL = "https://www.youtube.com/watch?v=V1p33hqPrUk"
 	_, _ = r.Resolve(context.Background(), ch, core.Settings{})
-	ch.Proxy = "http://proxy.example:8080"
-	_, _ = r.Resolve(context.Background(), ch, core.Settings{})
+	ch.Proxy = "0123456789abcdef01234567"
+	settings := core.Settings{Proxies: []core.Proxy{{ID: ch.Proxy, Name: "代理", Scheme: "http", Host: "proxy.example", Port: 8080}}}
+	_, _ = r.Resolve(context.Background(), ch, settings)
 	ch.Quality = 1080
-	_, _ = r.Resolve(context.Background(), ch, core.Settings{})
+	_, _ = r.Resolve(context.Background(), ch, settings)
 	if calls.Load() != 4 {
 		t.Fatalf("source/proxy/quality shared cache: %d", calls.Load())
 	}

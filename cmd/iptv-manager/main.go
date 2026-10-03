@@ -24,7 +24,7 @@ import (
 	"iptv-manager/internal/web"
 )
 
-var version = "0.3.0"
+var version = "0.4.0"
 
 func env(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {

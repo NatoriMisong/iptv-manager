@@ -79,8 +79,8 @@ func (r *integrationResolver) Invalidate(string) { r.mu.Lock(); r.invalidations+
 func integrationSetup(t *testing.T, upstream *httptest.Server, results ...string) (*Server, *httptest.Server, *integrationRepo, *integrationResolver) {
 	t.Helper()
 	repo := &integrationRepo{
-		settings: core.Settings{DefaultMode: "relay", DefaultQuality: 720, UpstreamProxy: "direct", PlaybackToken: "test-playback-token", MonthlyBudgetGB: 800},
-		channels: []core.Channel{{ID: "stable-one", Name: "新闻频道", URL: "https://www.youtube.com/watch?v=vr3XyVCR4T0", Enabled: true, Mode: "inherit", Proxy: "inherit", SortOrder: 0}, {ID: "disabled", Name: "停用频道", Enabled: false, SortOrder: 1}},
+		settings: core.Settings{DefaultMode: "relay", DefaultQuality: 720, PlaybackToken: "test-playback-token", MonthlyBudgetGB: 800},
+		channels: []core.Channel{{ID: "stable-one", Name: "新闻频道", URL: "https://www.youtube.com/watch?v=vr3XyVCR4T0", Enabled: true, Mode: "inherit", Proxy: core.DirectProxy, SortOrder: 0}, {ID: "disabled", Name: "停用频道", Enabled: false, SortOrder: 1}},
 		traffic:  make(map[string]int64),
 	}
 	if len(results) == 0 {

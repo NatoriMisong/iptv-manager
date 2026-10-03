@@ -45,6 +45,9 @@ type Repository interface {
 	Subscriptions(context.Context) ([]core.Subscription, error)
 	SaveSubscription(context.Context, core.Subscription) (core.Subscription, error)
 	DeleteSubscription(context.Context, string) error
+	SaveProxy(context.Context, core.Proxy) (core.Proxy, error)
+	DeleteProxy(context.Context, string) error
+	SetProviderProxy(context.Context, string, string) error
 }
 
 type Media interface {
@@ -56,6 +59,9 @@ type Options struct {
 	SecureCookies    bool
 	Version          string
 	SyncSubscription func(context.Context, string) error
+	// ProxyTester returns the egress IP seen through the proxy URL. Tests inject
+	// a fake; production fetches ipip.info.
+	ProxyTester func(context.Context, string) (string, error)
 }
 
 type session struct {
@@ -76,6 +82,7 @@ type server struct {
 	mu           sync.Mutex
 	sessions     map[string]session
 	attempts     map[string]attempt
+	proxyTests   chan struct{}
 }
 
 const sessionCookie = "iptv_session"
@@ -86,7 +93,7 @@ func New(repo Repository, media Media, opts Options) (http.Handler, error) {
 	if repo == nil || media == nil {
 		return nil, errors.New("repository and media are required")
 	}
-	s := &server{repo: repo, media: media, opts: opts, sessions: make(map[string]session), attempts: make(map[string]attempt)}
+	s := &server{repo: repo, media: media, opts: opts, sessions: make(map[string]session), attempts: make(map[string]attempt), proxyTests: make(chan struct{}, 1)}
 	static, err := fs.Sub(assets, "static")
 	if err != nil {
 		return nil, err
@@ -111,6 +118,11 @@ func New(repo Repository, media Media, opts Options) (http.Handler, error) {
 	mux.HandleFunc("POST /api/restore", s.auth(s.restore))
 	mux.HandleFunc("POST /api/password", s.auth(s.password))
 	mux.HandleFunc("POST /api/token", s.auth(s.rotateToken))
+	mux.HandleFunc("POST /api/proxies", s.auth(s.saveProxy))
+	mux.HandleFunc("PUT /api/proxies/{id}", s.auth(s.saveProxy))
+	mux.HandleFunc("DELETE /api/proxies/{id}", s.auth(s.deleteProxy))
+	mux.HandleFunc("POST /api/proxies/{id}/test", s.auth(s.testProxy))
+	mux.HandleFunc("PUT /api/providers/{id}/proxy", s.auth(s.providerProxy))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { fail(w, 404, "接口不存在") })
 	files := http.FileServer(http.FS(static))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +373,7 @@ func (s *server) saveChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	saved, err := s.repo.SaveChannel(r.Context(), ch)
 	if err != nil {
-		fail(w, 400, "频道保存失败，请检查名称、来源类型、直播链接、画质和代理设置")
+		fail(w, 400, "频道保存失败，请检查名称、来源类型、直播链接、画质和代理选择")
 		return
 	}
 	s.media.Invalidate(saved.ID)
@@ -500,9 +512,11 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "无法读取设置")
 		return
 	}
+	// The settings form never carries the token or proxy configuration.
 	setting.PlaybackToken = current.PlaybackToken
+	setting.Proxies, setting.ProviderProxies, setting.LegacyProxy = current.Proxies, current.ProviderProxies, ""
 	if err := s.repo.SaveSettings(r.Context(), setting); err != nil {
-		fail(w, 400, "设置无效，请检查域名、画质、流量预算和代理地址")
+		fail(w, 400, "设置无效，请检查访问地址、画质和流量预算")
 		return
 	}
 	s.invalidateAll(r.Context())

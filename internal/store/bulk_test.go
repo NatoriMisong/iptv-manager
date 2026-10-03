@@ -56,7 +56,7 @@ func TestBulkChannelsMixedRowsAndRetry(t *testing.T) {
 		t.Fatal("bulk add modified existing channels or settings")
 	}
 	for i, ch := range after.Channels[2:] {
-		if ch.SortOrder != 8+i || ch.Group != "新闻" || ch.Mode != "direct" || ch.Quality != 480 || ch.Proxy != "inherit" || !ch.Enabled || ch.ID == "" {
+		if ch.SortOrder != 8+i || ch.Group != "新闻" || ch.Mode != "direct" || ch.Quality != 480 || ch.Proxy != core.DirectProxy || !ch.Enabled || ch.ID == "" {
 			t.Errorf("new channel: %+v", ch)
 		}
 	}
@@ -109,7 +109,7 @@ func TestBulkLimitsAndValidation(t *testing.T) {
 		t.Fatalf("100-row batch: %+v %v", result, err)
 	}
 	channels, _ := s.Channels(testContext)
-	if channels[2].Mode != "inherit" || channels[2].Quality != 0 || channels[2].Proxy != "inherit" {
+	if channels[2].Mode != "inherit" || channels[2].Quality != 0 || channels[2].Proxy != core.DirectProxy {
 		t.Fatalf("defaults: %+v", channels[2])
 	}
 }

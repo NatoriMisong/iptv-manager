@@ -17,6 +17,7 @@ var (
 	videoIDPattern   = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
 	channelIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 	tokenPattern     = regexp.MustCompile(`^[A-Za-z0-9_-]{32,256}$`)
+	proxyIDPattern   = regexp.MustCompile(`^[0-9a-f]{24}$`)
 	monthPattern     = regexp.MustCompile(`^[0-9]{4}-(0[1-9]|1[0-2])$`)
 )
 
@@ -89,34 +90,60 @@ func validPort(u *url.URL) bool {
 	return true
 }
 
-func proxyValue(raw string, inherit bool) (string, error) {
-	if raw == "" {
-		if inherit {
-			return "inherit", nil
-		}
-		return "direct", nil
+const maxProxies = 50
+
+// proxyRef accepts only "direct" or the ID of a saved proxy. Free-form proxy
+// URLs are configured once on the proxy page, never on channels.
+func proxyRef(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == core.DirectProxy {
+		return core.DirectProxy, nil
 	}
-	if raw == "direct" || (raw == "inherit" && inherit) {
+	if proxyIDPattern.MatchString(raw) {
 		return raw, nil
 	}
-	if !safeText(raw, 2048) {
-		return "", invalid("proxy URL contains unsupported characters")
+	return "", invalid("proxy must be direct or the ID of a saved proxy")
+}
+
+func credentialText(value string) bool {
+	if len(value) > 256 {
+		return false
 	}
-	u, err := url.Parse(raw)
-	if err != nil || u == nil || u.Hostname() == "" || u.Opaque != "" {
-		return "", invalid("proxy must be direct, inherit, or an HTTP(S)/SOCKS5 URL")
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
+		}
 	}
-	if u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5" {
-		return "", invalid("proxy scheme must be http, https or socks5")
+	return true
+}
+
+func normalizeProxy(p core.Proxy) (core.Proxy, error) {
+	if p.ID != "" && !proxyIDPattern.MatchString(p.ID) {
+		return p, invalid("invalid proxy ID")
 	}
-	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-		return "", invalid("proxy URL cannot have a path, query or fragment")
+	p.Name = strings.TrimSpace(p.Name)
+	if p.Name == "" || !safeText(p.Name, 80) {
+		return p, invalid("proxy name must be 1–80 bytes without quotes or control characters")
 	}
-	if strings.ContainsAny(u.Host, " \t\r\n") || !validPort(u) {
-		return "", invalid("invalid proxy host")
+	p.Scheme = strings.ToLower(strings.TrimSpace(p.Scheme))
+	if p.Scheme != "http" && p.Scheme != "https" && p.Scheme != "socks5" {
+		return p, invalid("proxy scheme must be http, https or socks5")
 	}
-	u.Path = ""
-	return u.String(), nil
+	p.Host = strings.ToLower(strings.Trim(strings.TrimSpace(p.Host), "[]"))
+	if p.Host == "" || len(p.Host) > 253 || strings.ContainsAny(p.Host, " \t\r\n/\\@#?\"'<>%") {
+		return p, invalid("invalid proxy host")
+	}
+	if p.Port < 1 || p.Port > 65535 {
+		return p, invalid("proxy port must be between 1 and 65535")
+	}
+	if !credentialText(p.Username) || !credentialText(p.Password) {
+		return p, invalid("proxy credentials cannot exceed 256 bytes or contain control characters")
+	}
+	u, err := url.Parse(p.URL())
+	if err != nil || u.Hostname() != p.Host || u.Port() != strconv.Itoa(p.Port) {
+		return p, invalid("invalid proxy host")
+	}
+	return p, nil
 }
 
 func normalizeChannel(ch core.Channel) (core.Channel, error) {
@@ -167,7 +194,12 @@ func normalizeChannel(ch core.Channel) (core.Channel, error) {
 	if ch.SortOrder < 0 {
 		return ch, invalid("sort order cannot be negative")
 	}
-	ch.Proxy, err = proxyValue(ch.Proxy, true)
+	if ch.IsBuiltin() {
+		// Built-in channels share the provider-level proxy setting.
+		ch.Proxy = core.DirectProxy
+		return ch, nil
+	}
+	ch.Proxy, err = proxyRef(ch.Proxy)
 	return ch, err
 }
 
@@ -210,7 +242,36 @@ func normalizeSettings(s core.Settings) (core.Settings, error) {
 	if !tokenPattern.MatchString(s.PlaybackToken) {
 		return s, invalid("playback token requires 32–256 URL-safe letters, digits, underscores or hyphens")
 	}
-	var err error
-	s.UpstreamProxy, err = proxyValue(s.UpstreamProxy, false)
-	return s, err
+	s.LegacyProxy = ""
+	s = completeSettings(s)
+	if len(s.Proxies) > maxProxies {
+		return s, invalid("at most %d proxies can be saved", maxProxies)
+	}
+	names := make(map[string]bool, len(s.Proxies))
+	ids := make(map[string]bool, len(s.Proxies))
+	for i, p := range s.Proxies {
+		p, err := normalizeProxy(p)
+		if err != nil {
+			return s, err
+		}
+		if p.ID == "" || ids[p.ID] {
+			return s, invalid("proxy IDs must be present and unique")
+		}
+		if names[strings.ToLower(p.Name)] {
+			return s, invalid("proxy names must be unique")
+		}
+		ids[p.ID], names[strings.ToLower(p.Name)] = true, true
+		s.Proxies[i] = p
+	}
+	for id, raw := range s.ProviderProxies {
+		ref, err := proxyRef(raw)
+		if err != nil {
+			return s, err
+		}
+		if err := checkProxyRef(s, ref); err != nil {
+			return s, invalid("built-in source %s references a missing proxy", id)
+		}
+		s.ProviderProxies[id] = ref
+	}
+	return s, nil
 }

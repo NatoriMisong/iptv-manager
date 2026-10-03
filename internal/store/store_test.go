@@ -138,7 +138,7 @@ func TestStableChannelIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.ID == second.ID || created.ID == first.ID || created.SortOrder != 2 || created.Proxy != "inherit" {
+	if created.ID == second.ID || created.ID == first.ID || created.SortOrder != 2 || created.Proxy != core.DirectProxy {
 		t.Fatalf("invalid new channel: %+v", created)
 	}
 	created.ID = "does-not-exist"
@@ -148,7 +148,7 @@ func TestStableChannelIDs(t *testing.T) {
 }
 
 func TestUnsupportedSchemaIsNotModified(t *testing.T) {
-	for _, version := range []int{1, 4} {
+	for _, version := range []int{1, 2, 5} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "iptv-manager.db")
 			db, err := sql.Open("sqlite", path)
@@ -226,9 +226,9 @@ func TestImportIsAtomicAndExcludesAdmin(t *testing.T) {
 			case "settings":
 				backup.Settings.BaseURL = "https://tv.example.com/subpath"
 			case "older-version":
-				backup.Version = 1
+				backup.Version = 2
 			case "newer-version":
-				backup.Version = 4
+				backup.Version = 5
 			}
 			if err := s.Import(testContext, backup); !errors.Is(err, ErrValidation) {
 				t.Fatalf("import error = %v", err)
@@ -275,9 +275,9 @@ func TestChannelValidation(t *testing.T) {
 		{"logo attribute", func(ch *core.Channel) { ch.Logo = `https://example.com/logo" x="bad` }},
 		{"mode", func(ch *core.Channel) { ch.Mode = "auto" }},
 		{"quality", func(ch *core.Channel) { ch.Quality = 999 }},
-		{"proxy path", func(ch *core.Channel) { ch.Proxy = "http://127.0.0.1:8080/path" }},
-		{"proxy scheme", func(ch *core.Channel) { ch.Proxy = "file:///etc/passwd" }},
-		{"proxy port", func(ch *core.Channel) { ch.Proxy = "http://localhost:99999" }},
+		{"proxy url", func(ch *core.Channel) { ch.Proxy = "socks5://127.0.0.1:1080" }},
+		{"proxy inherit", func(ch *core.Channel) { ch.Proxy = "inherit" }},
+		{"proxy unknown", func(ch *core.Channel) { ch.Proxy = "0123456789abcdef01234567" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -288,10 +288,14 @@ func TestChannelValidation(t *testing.T) {
 			}
 		})
 	}
-	valid.Proxy = "socks5://user:password@127.0.0.1:1080"
+	proxy, err := s.SaveProxy(testContext, core.Proxy{Name: "本地", Scheme: "socks5", Host: "127.0.0.1", Port: 1080, Username: "user", Password: "password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid.Proxy = proxy.ID
 	valid.URL = "https://youtu.be/vr3XyVCR4T0?si=tracking"
 	created, err := s.SaveChannel(testContext, valid)
-	if err != nil || created.URL != "https://www.youtube.com/watch?v=vr3XyVCR4T0" {
+	if err != nil || created.URL != "https://www.youtube.com/watch?v=vr3XyVCR4T0" || created.Proxy != proxy.ID {
 		t.Fatalf("valid proxy or URL rejected: %+v %v", created, err)
 	}
 }
@@ -315,9 +319,14 @@ func TestSettingsValidation(t *testing.T) {
 		t.Fatalf("accepted short token: %v", err)
 	}
 	settings = original
-	settings.UpstreamProxy = "inherit"
+	settings.Proxies = []core.Proxy{{ID: "0123456789abcdef01234567", Name: "", Scheme: "http", Host: "proxy.example", Port: 8080}}
 	if err := s.SaveSettings(testContext, settings); !errors.Is(err, ErrValidation) {
-		t.Fatalf("accepted globally inherited proxy: %v", err)
+		t.Fatalf("accepted unnamed proxy: %v", err)
+	}
+	settings = original
+	settings.ProviderProxies = map[string]string{"tvb": "0123456789abcdef01234567"}
+	if err := s.SaveSettings(testContext, settings); !errors.Is(err, ErrValidation) {
+		t.Fatalf("accepted provider proxy reference to a missing proxy: %v", err)
 	}
 	after, err := s.Settings(testContext)
 	if err != nil || !reflect.DeepEqual(original, after) {

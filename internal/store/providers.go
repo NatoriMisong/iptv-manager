@@ -1,59 +1,9 @@
 package store
 
 import (
-	"context"
-	"database/sql"
-
 	"iptv-manager/internal/core"
 	"iptv-manager/internal/provider"
 )
-
-// Schema 2 -> 3 is atomic. Only exact, registered legacy sources are tagged;
-// IDs, URLs, order, playback settings and subscription ownership are preserved.
-func migrateProviders(ctx context.Context, tx *sql.Tx) error {
-	for _, stmt := range []string{
-		`ALTER TABLE channels ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE channels ADD COLUMN provider_channel_id TEXT NOT NULL DEFAULT ''`,
-	} {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return err
-		}
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT `+channelFields+` FROM channels`)
-	if err != nil {
-		return err
-	}
-	var changes []core.Channel
-	for rows.Next() {
-		ch, err := scanChannel(rows)
-		if err != nil {
-			rows.Close()
-			return err
-		}
-		upgraded := provider.UpgradeLegacy(ch)
-		if !upgraded.IsBuiltin() && !upgraded.IsStream() && upgraded.SourceType != "youtube" {
-			rows.Close()
-			return invalid("无法识别旧内置来源，数据库未更新")
-		}
-		if upgraded.ProviderID != ch.ProviderID {
-			changes = append(changes, upgraded)
-		}
-	}
-	err = rows.Err()
-	closeErr := rows.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	for _, ch := range changes {
-		if _, err := tx.ExecContext(ctx, `UPDATE channels SET source_type=?,provider_id=?,provider_channel_id=? WHERE id=?`, ch.SourceType, ch.ProviderID, ch.ProviderChannelID, ch.ID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func parseBuiltinChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []core.Channel, error) {
 	catalog, ok := provider.Lookup(req.ProviderID)
@@ -73,7 +23,8 @@ func parseBuiltinChannels(req core.BulkChannelRequest) (core.BulkChannelResult, 
 		if !ok {
 			return core.BulkChannelResult{}, nil, invalid("内置频道不存在")
 		}
-		ch, err := normalizeChannel(core.Channel{SourceType: "builtin", ProviderID: req.ProviderID, ProviderChannelID: key, Name: item.Name, URL: item.URL, Group: req.Group, Mode: req.Mode, Enabled: true, Proxy: "inherit"})
+		// The proxy of built-in channels is configured per provider, not per channel.
+		ch, err := normalizeChannel(core.Channel{SourceType: "builtin", ProviderID: req.ProviderID, ProviderChannelID: key, Name: item.Name, URL: item.URL, Group: req.Group, Mode: req.Mode, Enabled: true, Proxy: core.DirectProxy})
 		if err != nil {
 			return core.BulkChannelResult{}, nil, err
 		}

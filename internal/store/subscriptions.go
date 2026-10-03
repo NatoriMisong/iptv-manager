@@ -93,7 +93,7 @@ func normalizeSubscription(sub core.Subscription) (core.Subscription, error) {
 		return sub, invalid("更新间隔须为 5–10080 分钟")
 	}
 	var err error
-	sub.Proxy, err = proxyValue(sub.Proxy, true)
+	sub.Proxy, err = proxyRef(sub.Proxy)
 	return sub, err
 }
 func (s *Store) SaveSubscription(ctx context.Context, sub core.Subscription) (core.Subscription, error) {
@@ -106,6 +106,13 @@ func (s *Store) SaveSubscription(ctx context.Context, sub core.Subscription) (co
 		return sub, err
 	}
 	defer tx.Rollback()
+	settings, err := readSettings(ctx, tx)
+	if err != nil {
+		return sub, err
+	}
+	if err := checkProxyRef(settings, sub.Proxy); err != nil {
+		return sub, err
+	}
 	if sub.ID == "" {
 		var count int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM subscriptions`).Scan(&count); err != nil {
@@ -224,7 +231,7 @@ func (s *Store) ApplySubscription(ctx context.Context, sub core.Subscription, li
 		seen[entry.Key] = true
 		ch, exists := old[entry.Key]
 		if !exists {
-			ch = core.Channel{SubscriptionID: sub.ID, SourceKey: entry.Key, Enabled: true, Mode: "inherit", Proxy: "inherit", SortOrder: next}
+			ch = core.Channel{SubscriptionID: sub.ID, SourceKey: entry.Key, Enabled: true, Mode: "inherit", Proxy: core.DirectProxy, SortOrder: next}
 			next++
 			ch.ID, err = randomHex(12)
 			if err != nil {

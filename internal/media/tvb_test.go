@@ -295,9 +295,10 @@ func TestTVBProxyChangeReplacesSession(t *testing.T) {
 	}})
 	_, master := integrationGet(t, local.Client(), tvbWatch(local, "C"), nil)
 	old := currentTVBSession(t, srv)
-	repo.settings.UpstreamProxy = "socks5://proxy.example:1080"
+	repo.settings.Proxies = []core.Proxy{{ID: "0123456789abcdef01234567", Name: "测试代理", Scheme: "socks5", Host: "proxy.example", Port: 1080}}
+	repo.settings.ProviderProxies = map[string]string{"tvb": "0123456789abcdef01234567"}
 	resp, _ := integrationGet(t, local.Client(), tvbWatch(local, "C"), nil)
-	if resp.StatusCode != 200 || f.calls("C") != 2 || len(proxies) != 2 || proxies[1] != repo.settings.UpstreamProxy || old.Active() {
+	if resp.StatusCode != 200 || f.calls("C") != 2 || len(proxies) != 2 || proxies[1] != "socks5://proxy.example:1080" || old.Active() {
 		t.Fatal("proxy change reused the old session")
 	}
 	resp, _ = integrationGet(t, local.Client(), integrationLinks(master)[0], nil)

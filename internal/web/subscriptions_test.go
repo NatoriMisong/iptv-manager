@@ -46,7 +46,7 @@ func TestSubscriptionAPI(t *testing.T) {
 	if synced != "" {
 		t.Fatal("unauthorized sync invoked")
 	}
-	w := request(h, "POST", "/api/subscriptions", `{"name":"IPTV","url":"http://public.example/channels.m3u","interval_minutes":60,"enabled":true,"proxy":"inherit"}`, cookie, csrf, "")
+	w := request(h, "POST", "/api/subscriptions", `{"name":"IPTV","url":"http://public.example/channels.m3u","interval_minutes":60,"enabled":true,"proxy":"direct"}`, cookie, csrf, "")
 	var sub core.Subscription
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &sub) != nil || sub.ID == "" {
 		t.Fatalf("save subscription: %d %s", w.Code, w.Body.String())

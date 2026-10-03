@@ -28,7 +28,7 @@
   <div id="app" hidden>
     <header class="topbar">
       <a class="brand" href="/"><span class="brand-mark small" aria-hidden="true">▶</span><span>IPTV <strong>Manager</strong></span></a>
-      <nav aria-label="管理导航"><button class="nav active" data-view="channels">频道管理</button><button class="nav" data-view="subscriptions">M3U 订阅</button><button class="nav" data-view="settings">服务设置</button></nav>
+      <nav aria-label="管理导航"><button class="nav active" data-view="channels">频道管理</button><button class="nav" data-view="subscriptions">M3U 订阅</button><button class="nav" data-view="builtin">内置直播源</button><button class="nav" data-view="proxies">代理设置</button><button class="nav" data-view="settings">服务设置</button></nav>
       <div class="header-actions"><span id="version" class="version"></span><button id="logout" class="quiet">退出登录</button></div>
     </header>
     <main class="workspace">
@@ -58,13 +58,20 @@
         <div id="subscription-list" class="subscription-list"></div>
         <div id="subscriptions-empty" class="empty" hidden><h3>添加你的第一个 M3U 订阅</h3><p class="muted">填写包含多个频道的 HTTP/HTTPS M3U 列表地址，后续自动更新。</p></div>
       </section>
+      <section id="view-builtin" hidden>
+        <div class="page-heading"><div><p class="eyebrow">OFFICIAL SOURCES</p><h1>内置直播源</h1><p class="muted">每个来源的全部频道共用一个出站代理。解析播放地址、获取清单和中继分片都走这个代理。</p></div></div>
+        <div id="builtin-list" class="subscription-list"></div>
+      </section>
+      <section id="view-proxies" hidden>
+        <div class="page-heading"><div><p class="eyebrow">OUTBOUND ROUTES</p><h1>代理设置</h1><p class="muted">集中管理 HTTP、HTTPS 和 SOCKS5 代理。频道、订阅和内置直播源按名称选择代理，地址只需改一处。</p></div><button id="add-proxy" class="primary">＋ 添加代理</button></div>
+        <div id="proxy-list" class="subscription-list"></div>
+      </section>
       <section id="view-settings" hidden>
-        <div class="page-heading"><div><p class="eyebrow">MAKE IT YOURS</p><h1>服务设置</h1><p class="muted">配置默认播放方式、访问地址和流量预算。</p></div></div>
+        <div class="page-heading"><div><p class="eyebrow">MAKE IT YOURS</p><h1>服务设置</h1><p class="muted">配置默认播放方式、访问地址和流量预算。出站代理在“代理设置”页面管理。</p></div></div>
         <div class="settings-layout">
           <form id="settings-form" class="panel settings-card">
             <h2>连接与播放</h2><label for="base-url">公开访问地址</label><input id="base-url" name="base_url" type="url" required placeholder="http://tv.example.com:9000"><p class="field-help">填写播放器可访问的 HTTP 地址（域名或 IP，包含端口），不包含末尾路径。自行配置 HTTPS 后，填写对应的 HTTPS 地址。首次使用请先保存此设置。</p>
             <div class="form-grid"><div><label for="default-mode">默认播放方式</label><select id="default-mode" name="default_mode"><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div><label for="default-quality">YouTube 默认画质上限</label><select id="default-quality" name="default_quality"><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
-            <label for="upstream-proxy">服务器出站代理</label><input id="upstream-proxy" name="upstream_proxy" type="password" autocomplete="off" placeholder="direct 或 http://proxy:port"><p class="field-help">默认 direct，服务器直接访问直播源和订阅列表。支持 HTTP、HTTPS、SOCKS5 代理地址，按需填写。</p>
             <label for="monthly-budget">月度流量预算（GB）</label><input id="monthly-budget" name="monthly_budget_gb" type="number" min="1" max="1000000" required><p class="field-help">每月按 UTC 时间统计。服务商可能采用不同的计费口径。</p>
             <div class="form-footer"><button class="primary" type="submit">保存设置</button><span id="settings-error" class="error" role="alert"></span></div>
           </form>
@@ -79,11 +86,12 @@
     <label id="channel-type-label" for="channel-type">来源类型</label><select id="channel-type" name="source_type"><option value="stream">通用直播源（M3U8 / HTTP）</option><option value="youtube">YouTube 直播</option><option id="channel-builtin-option" value="builtin">内置直播源</option></select>
     <p id="channel-provider-info" class="field-help" hidden></p>
     <p id="channel-managed" class="field-help" hidden>此频道来自 M3U 订阅，名称、分组、图标和地址随订阅同步。可以在这里调整播放方式、代理和启停状态。</p>
+    <p id="channel-proxy-note" class="field-help" hidden>此频道的出站代理由“内置直播源”页面按来源统一设置。</p>
     <label for="channel-name">频道名称</label><input id="channel-name" name="name" maxlength="120" required placeholder="例如：新闻频道">
     <label for="channel-url">直播来源地址</label><input id="channel-url" name="url" type="url" required placeholder="https://example.com/live.m3u8"><p id="channel-source-help" class="field-help"></p>
     <div class="form-grid"><div><label for="channel-group">分组</label><input id="channel-group" name="group" maxlength="80" placeholder="新闻"></div><div><label for="channel-mode">播放方式</label><select id="channel-mode" name="mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div></div>
     <div class="form-grid"><div id="channel-quality-field"><label for="channel-quality">YouTube 画质上限</label><select id="channel-quality" name="quality"><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div><div><label for="channel-enabled">频道状态</label><select id="channel-enabled" name="enabled"><option value="true">启用</option><option value="false">停用</option></select></div></div>
-    <details><summary>更多选项</summary><label for="channel-logo">频道图标地址</label><input id="channel-logo" name="logo" type="url" placeholder="https://example.com/logo.png"><label for="channel-proxy">出站代理</label><input id="channel-proxy" name="proxy" type="password" autocomplete="off" placeholder="inherit"><p class="field-help">inherit 继承全局，direct 强制直连，或填写 HTTP、HTTPS、SOCKS5 代理地址。客户端直连时不使用服务器代理。</p></details>
+    <details><summary>更多选项</summary><label for="channel-logo">频道图标地址</label><input id="channel-logo" name="logo" type="url" placeholder="https://example.com/logo.png"><div id="channel-proxy-field"><label for="channel-proxy">出站代理</label><select id="channel-proxy" name="proxy"></select><p class="field-help">服务器解析来源、获取清单和中继分片时使用。代理在“代理设置”页面添加；客户端直连时不经过服务器代理。</p></div></details>
     <p id="channel-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button type="submit" class="primary">保存频道</button></div>
   </form></dialog>
   <dialog id="builtin-dialog" aria-labelledby="builtin-title"><form id="builtin-form">
@@ -93,7 +101,7 @@
     <div class="builtin-toolbar"><span id="builtin-count" class="muted tiny" role="status"></span><button id="builtin-select-all" type="button" class="quiet">全选</button><button id="builtin-select-none" type="button" class="quiet">清空</button></div>
     <div id="builtin-channels" class="builtin-channels" role="group" aria-label="选择内置频道"></div>
     <div class="form-grid"><div><label for="builtin-group">分组</label><input id="builtin-group" maxlength="150" required></div><div><label for="builtin-mode">播放方式</label><select id="builtin-mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div></div>
-    <p class="field-help">重复来源自动跳过。代理继承全局设置，添加后可逐个修改。</p><p id="builtin-help" class="field-help"></p>
+    <p class="field-help">重复来源自动跳过。出站代理在“内置直播源”页面按来源统一设置。</p><p id="builtin-help" class="field-help"></p>
     <p id="builtin-error" class="error" role="alert"></p><p id="builtin-result" role="status" hidden></p>
     <div class="dialog-footer"><button type="button" class="outline close-dialog">关闭</button><button id="builtin-submit" type="submit" class="primary">添加所选频道</button></div>
   </form></dialog>
@@ -102,7 +110,7 @@
     <label for="subscription-name">订阅名称</label><input id="subscription-name" name="name" required maxlength="150" placeholder="例如：我的电视频道">
     <label for="subscription-url">M3U 列表地址</label><input id="subscription-url" name="url" type="url" required placeholder="https://example.com/channels.m3u"><p class="field-help">填写包含多个频道的列表地址。单个 M3U8 直播请使用“添加频道”。</p>
     <div class="form-grid"><div><label for="subscription-interval">更新间隔（分钟）</label><input id="subscription-interval" name="interval_minutes" type="number" min="5" max="10080" value="60" required></div><div><label for="subscription-enabled">自动更新</label><select id="subscription-enabled" name="enabled"><option value="true">启用</option><option value="false">暂停</option></select></div></div>
-    <label for="subscription-proxy">获取列表时使用的代理</label><input id="subscription-proxy" name="proxy" type="password" autocomplete="off" placeholder="inherit"><p class="field-help">inherit 继承全局，direct 直接连接，或填写代理地址。频道中继的代理可另行设置。</p>
+    <label for="subscription-proxy">获取列表时使用的代理</label><select id="subscription-proxy" name="proxy"></select><p class="field-help">只影响下载 M3U 列表。导入的频道默认直连，可在频道编辑中逐个选择代理。</p>
     <p id="subscription-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button type="submit" class="primary">保存订阅</button></div>
   </form></dialog>
   <dialog id="bulk-dialog" aria-labelledby="bulk-title">
@@ -113,14 +121,23 @@
       <label for="bulk-text">频道名称和直播链接 <span id="bulk-count" class="muted">0 / 100</span></label>
       <textarea id="bulk-text" name="text" rows="6" required maxlength="262144" spellcheck="false" aria-describedby="bulk-help" placeholder="中天新闻,https://www.youtube.com/watch?v=vr3XyVCR4T0&#10;东森新闻 51,https://youtu.be/V1p33hqPrUk&#10;https://www.youtube.com/watch?v=…"></textarea>
       <p id="bulk-help" class="field-help">支持英文逗号、中文逗号或 Tab 分隔名称与链接；空行忽略。仅填写链接时自动生成名称，可添加后编辑。</p>
-      <label for="bulk-group">统一分组（可选）</label><input id="bulk-group" name="group" maxlength="150" placeholder="例如：新闻">
+      <div class="form-grid"><div><label for="bulk-group">统一分组（可选）</label><input id="bulk-group" name="group" maxlength="150" placeholder="例如：新闻"></div><div><label for="bulk-proxy">出站代理</label><select id="bulk-proxy" name="proxy"></select></div></div>
       <div class="form-grid"><div><label for="bulk-mode">播放方式</label><select id="bulk-mode" name="mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div id="bulk-quality-field"><label for="bulk-quality">YouTube 画质上限</label><select id="bulk-quality" name="quality"><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
-      <p class="field-help">新频道默认启用，代理继承全局设置，按输入顺序追加。播放时才检查来源是否可用。</p>
+      <p class="field-help">新频道默认启用，本批统一使用所选代理，按输入顺序追加。播放时才检查来源是否可用。</p>
       <p id="bulk-error" class="error" role="alert"></p>
       <section id="bulk-results" aria-label="批量添加结果" hidden><p id="bulk-summary" role="status" tabindex="-1"></p><ol id="bulk-result-list"></ol></section>
       <div class="dialog-footer"><button type="button" class="outline close-dialog">关闭</button><button id="bulk-submit" type="submit" class="primary">添加频道</button></div>
     </form>
   </dialog>
+  <dialog id="proxy-dialog" aria-labelledby="proxy-dialog-title"><form id="proxy-form">
+    <div class="dialog-heading"><div><p class="eyebrow">OUTBOUND PROXY</p><h2 id="proxy-dialog-title">添加代理</h2></div><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div>
+    <input name="id" type="hidden">
+    <label for="proxy-name">名称</label><input id="proxy-name" name="name" maxlength="80" required placeholder="例如：家里的 SOCKS5">
+    <div class="form-grid proxy-grid"><div><label for="proxy-scheme">协议</label><select id="proxy-scheme" name="scheme"><option value="socks5">SOCKS5</option><option value="http">HTTP</option><option value="https">HTTPS</option></select></div><div><label for="proxy-host">主机</label><input id="proxy-host" name="host" required maxlength="253" placeholder="10.10.1.38 或 proxy.example.com"></div><div><label for="proxy-port">端口</label><input id="proxy-port" name="port" type="number" min="1" max="65535" required placeholder="1080"></div></div>
+    <div class="form-grid"><div><label for="proxy-username">用户名（可选）</label><input id="proxy-username" name="username" maxlength="256" autocomplete="off"></div><div><label for="proxy-password">密码（可选）</label><input id="proxy-password" name="password" type="password" maxlength="256" autocomplete="new-password"></div></div>
+    <p class="field-help">服务器通过该代理访问直播来源，播放器不经过它。密码中的 @、: 等字符无需转义。保存后可在列表中点击“测试”获取出口 IP。</p>
+    <p id="proxy-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button type="submit" class="primary">保存代理</button></div>
+  </form></dialog>
   <dialog id="password-dialog"><form id="password-form"><div class="dialog-heading"><h2>修改管理密码</h2><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div><label for="old-password">当前密码</label><input id="old-password" name="old_password" type="password" autocomplete="current-password" required><label for="new-password">新密码</label><input id="new-password" name="password" type="password" autocomplete="new-password" required minlength="12"><label for="confirm-password">确认新密码</label><input id="confirm-password" name="confirm" type="password" autocomplete="new-password" required minlength="12"><p class="field-help">使用 12–72 字节的密码，修改后所有管理会话退出登录。</p><p id="password-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button type="submit" class="primary">更新密码</button></div></form></dialog>
   <dialog id="copy-dialog"><div class="dialog-heading"><h2>订阅地址</h2><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div><p class="muted">浏览器未允许自动复制，请手动复制下面的地址。</p><textarea id="copy-value" rows="5" readonly aria-label="订阅地址"></textarea></dialog>
 </body>
