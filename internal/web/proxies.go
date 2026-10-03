@@ -70,7 +70,7 @@ func (s *server) providerProxy(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, store.ErrValidation) {
 			fail(w, 400, strings.TrimPrefix(err.Error(), store.ErrValidation.Error()+": "))
 		} else if errors.Is(err, store.ErrNotFound) {
-			fail(w, 404, "内置直播源不存在")
+			fail(w, 404, "网站直播源不存在")
 		} else {
 			fail(w, 500, "代理设置保存失败")
 		}

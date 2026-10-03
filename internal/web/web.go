@@ -468,7 +468,7 @@ func (s *server) refresh(w http.ResponseWriter, r *http.Request) {
 	}
 	s.media.Invalidate(id)
 	if ch.IsBuiltin() {
-		respond(w, 200, map[string]string{"message": "已清除内置来源的播放地址、会话 Cookie 和媒体缓存，下次播放时重新获取"})
+		respond(w, 200, map[string]string{"message": "已清除网站来源的播放地址、会话 Cookie 和媒体缓存，下次播放时重新获取"})
 		return
 	}
 	if ch.IsStream() {

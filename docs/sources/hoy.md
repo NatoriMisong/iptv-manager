@@ -1,12 +1,12 @@
 # HOY 76、77、78
 
-| 内置频道 | provider_channel_id | 官方接口内部 ID | 保存的官网页 |
+| 网站来源频道 | provider_channel_id | 官方接口内部 ID | 保存的官网页 |
 |---|---|---|---|
 | HOY 76 | 76 | 1 | <https://hoy.tv/live?channel_no=76> |
 | HOY 77 | 77 | 2 | <https://hoy.tv/live?channel_no=77> |
 | HOY 78 | 78 | 3 | <https://hoy.tv/live?channel_no=78> |
 
-管理页“添加频道 → 内置直播源 → HOY”默认勾选三路并采用中继，代理继承全局配置。数据库使用 `source_type=builtin`、`provider_id=hoy`，保存上述频道标识与官网页，不保存临时 CDN URL。重复导入保留原设置，配置备份可恢复身份和固定播放入口。添加不访问官网；来源解析、签名和会话均由 `internal/provider/hoy.go` 处理，HLS 中继继续共用媒体层。
+管理页“添加频道 → 网站直播源 → HOY”默认勾选三路并采用中继，代理继承全局配置。数据库使用 `source_type=builtin`、`provider_id=hoy`，保存上述频道标识与官网页，不保存临时 CDN URL。重复导入保留原设置，配置备份可恢复身份和固定播放入口。添加不访问官网；来源解析、签名和会话均由 `internal/provider/hoy.go` 处理，HLS 中继继续共用媒体层。
 
 ## 官网获取流程
 
@@ -33,4 +33,4 @@
 - 官方播放接口返回 200 和有效签名，不代表直播 CDN 允许当前出口。三个频道的清单都可能返回地区限制 403，正文为 `The Amazon CloudFront distribution is configured to block access from your country.` 需要使用来源允许的地区出口；刷新签名不能解除地区限制。
 - 尚未验证真实媒体播放，画质、音轨、VLC 解码和长期稳定性需要在实际环境中验收。模拟源中的音轨和 AES-128 密钥用于检查中继能力，不表示真实 HOY 清单一定包含这些资源。
 - 签名过期和拒绝访问后的恢复由模拟来源测试覆盖；真实签名到期后能否连续播放，取决于播放器行为，必要时重新打开频道。
-- 发布配置及内置目录不包含开发代理、临时签名或账户 Cookie。
+- 发布配置及网站来源目录不包含开发代理、临时签名或账户 Cookie。

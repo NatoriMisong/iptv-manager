@@ -114,7 +114,7 @@ function renderChannels() {
     const identity = node('div');
     const name = node('div', 'channel-name', ch.name);
     name.title = ch.name;
-    const sourceName = ch.subscription_id ? `M3U · ${state.subscriptions?.find(s => s.id === ch.subscription_id)?.name || '订阅'}` : ch.source_type === 'builtin' ? (builtinSources.find(source => source.id === ch.provider_id)?.name || '内置直播') : ch.source_type === 'stream' ? '通用直播' : 'YouTube';
+    const sourceName = ch.subscription_id ? `M3U · ${state.subscriptions?.find(s => s.id === ch.subscription_id)?.name || '订阅'}` : ch.source_type === 'builtin' ? (builtinSources.find(source => source.id === ch.provider_id)?.name || '网站直播') : ch.source_type === 'stream' ? '通用直播' : 'YouTube';
     identity.append(name, node('div', 'channel-meta', `${ch.group || '未分组'} · ${sourceName}`));
     cell.append(logo, identity);
     channel.append(cell);
@@ -186,7 +186,7 @@ function editChannel(channel) {
   $('#channel-type').hidden = builtin;
   $('#channel-type-label').hidden = builtin;
   $('#channel-provider-info').hidden = !builtin;
-  $('#channel-provider-info').textContent = builtin ? `内置直播源：${builtinSources.find(source => source.id === channel.provider_id)?.name || channel.provider_id}（来源固定）` : '';
+  $('#channel-provider-info').textContent = builtin ? `网站直播源：${builtinSources.find(source => source.id === channel.provider_id)?.name || channel.provider_id}（来源固定）` : '';
   $('#channel-builtin-option').hidden = !!channel;
   $('#channel-builtin-option').disabled = !!channel;
   $('#channel-managed').hidden = !managed;
@@ -204,7 +204,7 @@ function updateSourceFields(prefix) {
     $('#channel-source-help').textContent = stream ? '支持公网 HTTP/HTTPS HLS 和媒体直播地址。直连由播放器连接原始来源，中继由服务器转发。' : '通过 yt-dlp 按需解析 YouTube 直播；支持 watch?v=… 和 youtu.be/… 链接。';
     if (builtin) {
       const channel = state.channels.find(ch => ch.id === $('#channel-form').elements.namedItem('id').value);
-      $('#channel-source-help').textContent = builtinSources.find(source => source.id === channel?.provider_id)?.playback_help || '内置来源由对应模块处理，可调整播放方式、代理和启停状态。';
+      $('#channel-source-help').textContent = builtinSources.find(source => source.id === channel?.provider_id)?.playback_help || '网站来源由对应模块处理，可调整播放方式、代理和启停状态。';
     }
   } else {
     $('#bulk-text').placeholder = stream ? '新闻频道,https://example.com/live.m3u8\nhttps://example.com/channel.ts' : '中天新闻,https://www.youtube.com/watch?v=vr3XyVCR4T0\nhttps://youtu.be/V1p33hqPrUk';
@@ -594,7 +594,7 @@ function proxyUsage(ref) {
   const channels = (state.channels || []).filter(ch => ch.source_type !== 'builtin' && (ch.proxy || 'direct') === ref).length;
   const subscriptions = (state.subscriptions || []).filter(sub => (sub.proxy || 'direct') === ref).length;
   const providers = Object.values(state.settings.provider_proxies || {}).filter(value => (value || 'direct') === ref).length;
-  return `${channels} 个频道 · ${subscriptions} 个订阅 · ${providers} 个内置直播源`;
+  return `${channels} 个频道 · ${subscriptions} 个订阅 · ${providers} 个网站直播源`;
 }
 function renderBuiltinPage() {
   const list = $('#builtin-list');
@@ -665,7 +665,7 @@ function renderProxies() {
     test.disabled = outcome?.status === 'running';
     test.addEventListener('click', () => testProxy(p));
     buttons.append(test, action('编辑', `编辑代理 ${p.name}`, () => editProxy(p)), action('删除', `删除代理 ${p.name}`, async () => {
-      if (!confirm(`删除代理「${p.name}」？正在使用它的频道、订阅或内置直播源会阻止删除。`)) return;
+      if (!confirm(`删除代理「${p.name}」？正在使用它的频道、订阅或网站直播源会阻止删除。`)) return;
       await api(`/proxies/${encodeURIComponent(p.id)}`, { method: 'DELETE' });
       proxyTests.delete(p.id);
       await loadState({ background: true });
@@ -674,7 +674,7 @@ function renderProxies() {
     card.append(buttons);
     list.append(card);
   });
-  if (!proxies.length) list.append(node('p', 'muted tiny', '尚未添加代理。点击右上角“添加代理”，然后在频道、订阅或内置直播源中选择它。'));
+  if (!proxies.length) list.append(node('p', 'muted tiny', '尚未添加代理。点击右上角“添加代理”，然后在频道、订阅或网站直播源中选择它。'));
 }
 async function testProxy(p) {
   if (proxyTests.get(p.id)?.status === 'running') return;
@@ -711,7 +711,7 @@ $('#proxy-form').addEventListener('submit', async event => {
     $('#proxy-dialog').close();
     proxyTests.delete(data.id);
     await loadState({ background: true });
-    toast(data.id ? '代理已更新，使用它的频道将重新连接' : '代理已保存，可在频道、订阅或内置直播源中选择');
+    toast(data.id ? '代理已更新，使用它的频道将重新连接' : '代理已保存，可在频道、订阅或网站直播源中选择');
   } catch (error) { $('#proxy-error').textContent = error.message; }
   finally { button.disabled = false; }
 });

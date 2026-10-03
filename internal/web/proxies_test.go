@@ -58,12 +58,12 @@ func TestProxyAPI(t *testing.T) {
 	if len(tested) != 0 {
 		t.Fatal("unauthorized proxy test executed")
 	}
-	w := request(h, "POST", "/api/proxies", `{"name":"家里","scheme":"socks5","host":"10.10.1.38","port":1080,"username":"","password":""}`, cookie, csrf, "")
+	w := request(h, "POST", "/api/proxies", `{"name":"家里","scheme":"socks5","host":"proxy.example","port":1080,"username":"","password":""}`, cookie, csrf, "")
 	var p core.Proxy
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &p) != nil || len(p.ID) != 24 || p.URL() != "socks5://10.10.1.38:1080" {
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &p) != nil || len(p.ID) != 24 || p.URL() != "socks5://proxy.example:1080" {
 		t.Fatalf("create proxy: %d %s", w.Code, w.Body.String())
 	}
-	if w := request(h, "POST", "/api/proxies", `{"name":"","scheme":"socks5","host":"10.10.1.38","port":1080}`, cookie, csrf, ""); w.Code != 400 || !strings.Contains(w.Body.String(), "name") {
+	if w := request(h, "POST", "/api/proxies", `{"name":"","scheme":"socks5","host":"proxy.example","port":1080}`, cookie, csrf, ""); w.Code != 400 || !strings.Contains(w.Body.String(), "name") {
 		t.Fatalf("invalid proxy: %d %s", w.Code, w.Body.String())
 	}
 	if w := request(h, "PUT", "/api/proxies/ffffffffffffffffffffffff", `{"name":"x","scheme":"http","host":"h.example","port":1}`, cookie, csrf, ""); w.Code != 404 {
@@ -124,7 +124,7 @@ func TestProxyAPI(t *testing.T) {
 		t.Fatalf("in-use delete: %d %s", w.Code, w.Body.String())
 	}
 	media.invalidated = nil
-	if w := request(h, "PUT", "/api/proxies/"+p.ID, `{"name":"家里","scheme":"socks5","host":"10.10.1.38","port":1081}`, cookie, csrf, ""); w.Code != 200 {
+	if w := request(h, "PUT", "/api/proxies/"+p.ID, `{"name":"家里","scheme":"socks5","host":"proxy.example","port":1081}`, cookie, csrf, ""); w.Code != 200 {
 		t.Fatalf("update proxy: %d %s", w.Code, w.Body.String())
 	}
 	if len(media.invalidated) < 2 {
@@ -140,7 +140,7 @@ func TestProxyAPI(t *testing.T) {
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &outcome) != nil || !outcome.OK || outcome.IP != "203.0.113.9" {
 		t.Fatalf("proxy test: %d %s", w.Code, w.Body.String())
 	}
-	if used := <-tested; used != "socks5://10.10.1.38:1081" {
+	if used := <-tested; used != "socks5://proxy.example:1081" {
 		t.Fatalf("tested URL = %s", used)
 	}
 	if w := request(h, "POST", "/api/proxies/ffffffffffffffffffffffff/test", "", cookie, csrf, ""); w.Code != 404 {

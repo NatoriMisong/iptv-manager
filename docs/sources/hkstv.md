@@ -6,9 +6,9 @@ HTTPS HLS 主清单：<https://webcast.hkstv.tv/livestream/mutfysrq/playlist.m3u
 
 ## 在项目中使用
 
-打开“添加频道 → 内置直播源 → 香港卫视”，勾选添加。默认服务器中继，可改为客户端直连；代理继承全局设置，添加后可逐频道修改。重复添加跳过已有地址，不覆盖原播放设置。
+打开“添加频道 → 网站直播源 → 香港卫视”，勾选添加。默认服务器中继，可改为客户端直连；代理继承全局设置，添加后可逐频道修改。重复添加跳过已有地址，不覆盖原播放设置。
 
-作为 `builtin` 内置来源保存（`provider_id=hkstv`、`provider_channel_id=mutfysrq`），目录和请求规则由 `internal/provider/hkstv.go` 维护，媒体传输复用共用层。不调用 yt-dlp 或 TVB 接口，不额外引入解析进程、Cookie 会话、定时请求或转码。
+作为 `builtin` 网站来源保存（`provider_id=hkstv`、`provider_channel_id=mutfysrq`），目录和请求规则由 `internal/provider/hkstv.go` 维护，媒体传输复用共用层。不调用 yt-dlp 或 TVB 接口，不额外引入解析进程、Cookie 会话、定时请求或转码。
 
 频道保存上面的主清单地址。上游通过主清单自动提供带 `hls_ctx` 参数的子清单和分片，这类临时子清单地址不应保存为频道来源；会话到期后重新打开频道，从主清单取得新会话。
 
@@ -20,7 +20,7 @@ HTTPS HLS 主清单：<https://webcast.hkstv.tv/livestream/mutfysrq/playlist.m3u
 2. 请求 `GET https://hkstv.tv/lives/api/player/mutfysrq?mode=live&protocal=hls`。`protocal` 为官网使用的参数拼写。
 3. 接口返回 HTTP 的 `webcast.hkstv.tv/livestream/mutfysrq/playlist.m3u8`；播放服务器会跳转到 HTTPS。本项目直接保存 HTTPS 地址。
 
-当前主清单 URL 不带认证或签名参数，但不能保证上游以后不改变地址。内置地址随项目维护；如果官网更换来源，应更新该模块中的目录，或另建一个通用直播频道使用自定义 URL；已添加的内置频道来源字段只读。
+当前主清单 URL 不带认证或签名参数，但不能保证上游以后不改变地址。来源地址随项目维护；如果官网更换来源，应更新该模块中的目录，或另建一个通用直播频道使用自定义 URL；已添加频道的来源字段只读。
 
 ## 已知限制
 

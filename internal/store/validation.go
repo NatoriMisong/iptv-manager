@@ -166,7 +166,7 @@ func normalizeChannel(ch core.Channel) (core.Channel, error) {
 		ch, err = provider.Normalize(ch)
 	} else {
 		if ch.ProviderID != "" || ch.ProviderChannelID != "" {
-			return ch, invalid("普通来源不能带内置来源标识")
+			return ch, invalid("普通来源不能带网站来源标识")
 		}
 		ch.URL, err = channelURL(ch.SourceType, ch.URL)
 	}

@@ -48,7 +48,7 @@ func ChannelInfo(id, key string) (Channel, bool) {
 func Normalize(ch core.Channel) (core.Channel, error) {
 	item, ok := ChannelInfo(ch.ProviderID, ch.ProviderChannelID)
 	if !ok || ch.SubscriptionID != "" {
-		return ch, errors.New("内置来源或频道标识无效")
+		return ch, errors.New("网站来源或频道标识无效")
 	}
 	ch.SourceType = "builtin"
 	ch.URL = item.URL
@@ -100,7 +100,7 @@ func (r *Registry) Resolve(ctx context.Context, ch core.Channel, settings core.S
 	}
 	p := r.resolvers[ch.ProviderID]
 	if p == nil {
-		return Playback{}, errors.New("内置来源不可用")
+		return Playback{}, errors.New("网站来源不可用")
 	}
 	return p.Resolve(ctx, normalized, settings, config)
 }

@@ -25,8 +25,8 @@ func TestProxyLifecycleAndReferences(t *testing.T) {
 			t.Errorf("accepted invalid proxy %+v: %v", bad, err)
 		}
 	}
-	first, err := s.SaveProxy(testContext, core.Proxy{Name: " 家里 ", Scheme: "SOCKS5", Host: "10.10.1.38", Port: 1080})
-	if err != nil || len(first.ID) != 24 || first.Name != "家里" || first.URL() != "socks5://10.10.1.38:1080" {
+	first, err := s.SaveProxy(testContext, core.Proxy{Name: " 家里 ", Scheme: "SOCKS5", Host: "proxy.example", Port: 1080})
+	if err != nil || len(first.ID) != 24 || first.Name != "家里" || first.URL() != "socks5://proxy.example:1080" {
 		t.Fatalf("first proxy = %+v, %v", first, err)
 	}
 	second, err := s.SaveProxy(testContext, core.Proxy{Name: "公司", Scheme: "http", Host: "Proxy.Example", Port: 8080, Username: "user", Password: "p@ss:word"})
@@ -40,7 +40,7 @@ func TestProxyLifecycleAndReferences(t *testing.T) {
 		t.Fatalf("unknown proxy updated: %v", err)
 	}
 	first.Port = 1081
-	if updated, err := s.SaveProxy(testContext, first); err != nil || updated.ID != first.ID || updated.URL() != "socks5://10.10.1.38:1081" {
+	if updated, err := s.SaveProxy(testContext, first); err != nil || updated.ID != first.ID || updated.URL() != "socks5://proxy.example:1081" {
 		t.Fatalf("proxy update failed: %+v %v", updated, err)
 	}
 	settings, err := s.Settings(testContext)
@@ -48,7 +48,7 @@ func TestProxyLifecycleAndReferences(t *testing.T) {
 		t.Fatalf("settings = %+v, %v", settings, err)
 	}
 	ch, err := s.SaveChannel(testContext, core.Channel{Name: "频道", SourceType: "stream", URL: "https://example.com/live.m3u8", Enabled: true, Proxy: first.ID})
-	if err != nil || core.EffectiveProxy(ch, settings) != "socks5://10.10.1.38:1081" {
+	if err != nil || core.EffectiveProxy(ch, settings) != "socks5://proxy.example:1081" {
 		t.Fatalf("channel proxy = %+v, %v", ch, err)
 	}
 	sub, err := s.SaveSubscription(testContext, core.Subscription{Name: "订阅", URL: "https://example.com/list.m3u", IntervalMinutes: 60, Enabled: true, Proxy: second.ID})
@@ -75,7 +75,7 @@ func TestProxyLifecycleAndReferences(t *testing.T) {
 	}
 	settings, _ = s.Settings(testContext)
 	builtin, err := s.Channel(testContext, result.Results[0].ChannelID)
-	if err != nil || builtin.Proxy != core.DirectProxy || core.EffectiveProxy(builtin, settings) != "socks5://10.10.1.38:1081" {
+	if err != nil || builtin.Proxy != core.DirectProxy || core.EffectiveProxy(builtin, settings) != "socks5://proxy.example:1081" {
 		t.Fatalf("builtin channel did not follow the provider proxy: %+v %v", builtin, err)
 	}
 	var inUse *ProxyInUseError

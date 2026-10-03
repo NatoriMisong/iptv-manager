@@ -49,7 +49,7 @@ func (s *Server) Invalidate(id string) {
 			s.reportState(id, "unknown", "等待连接原始直播源")
 		}
 		if ch.IsBuiltin() {
-			s.reportState(id, "unknown", "内置来源缓存已清除，等待下次播放")
+			s.reportState(id, "unknown", "网站来源缓存已清除，等待下次播放")
 		}
 	}
 }

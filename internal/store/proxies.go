@@ -14,7 +14,7 @@ import (
 type ProxyInUseError struct{ Channels, Subscriptions, Providers int }
 
 func (e *ProxyInUseError) Error() string {
-	return fmt.Sprintf("该代理仍被 %d 个频道、%d 个订阅和 %d 个内置直播源使用，请先修改它们的代理设置", e.Channels, e.Subscriptions, e.Providers)
+	return fmt.Sprintf("该代理仍被 %d 个频道、%d 个订阅和 %d 个网站直播源使用，请先修改它们的代理设置", e.Channels, e.Subscriptions, e.Providers)
 }
 
 type rowQueryer interface {

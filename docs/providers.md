@@ -1,18 +1,18 @@
-# 内置直播来源开发说明
+# 网站直播来源开发说明
 
-从 0.3.0 起，内置来源统一以 `source_type=builtin` 保存，使用 `provider_id` 和 `provider_channel_id` 标识供应方与频道。频道数据库 ID 仍是独立的随机 ID，决定固定播放入口；显示名称、分组、播放方式和代理不参与来源身份匹配。从 0.4.0 起，内置频道不再有逐频道代理，`settings.provider_proxies[provider_id]` 为整个来源选择一个命名代理或直连，`core.EffectiveProxy` 对内置频道按此解析。
+从 0.3.0 起，网站来源统一以 `source_type=builtin` 保存，使用 `provider_id` 和 `provider_channel_id` 标识供应方与频道。频道数据库 ID 仍是独立的随机 ID，决定固定播放入口；显示名称、分组、播放方式和代理不参与来源身份匹配。从 0.4.0 起，网站来源频道不再有逐频道代理，`settings.provider_proxies[provider_id]` 为整个来源选择一个命名代理或直连，`core.EffectiveProxy` 对网站来源频道按此解析。
 
 ## 文件分工
 
 | 文件 | 职责 |
 |---|---|
-| `internal/provider/tdm.go` | 澳广视目录、固定 HLS 来源 |
+| `internal/provider/tdm.go` | 澳广视目录、官网域名接口和按出口改写直播域名 |
 | `internal/provider/hkstv.go` | 香港卫视目录、固定 HLS 来源和浏览器 User-Agent |
 | `internal/provider/tvb.go` | TVB 目录、官网接口、签名地址、Cookie 会话、有效期和请求规则 |
 | `internal/provider/provider.go` | 目录、解析结果、会话接口和静态来源共用实现 |
 | `internal/provider/registry.go` | 统一注册、身份验证、旧来源匹配及分发 |
 | `internal/media/provider.go` | 通用会话中继、按原音视频轨道恢复过期清单 |
-| `internal/store/providers.go` | 内置目录导入与去重身份 |
+| `internal/store/providers.go` | 网站来源目录导入与去重身份 |
 | `internal/store/proxies.go` | 命名代理的保存、删除保护和来源代理设置 |
 
 HLS 改写、播放器鉴权、资源引用、缓存、并发限制和流量统计统一留在 `internal/media`；SQLite 与管理 API 不实现某个电视台的 Cookie 或解析规则。前端读取目录中的名称、说明、链接标签和播放提示，不判断某个供应方名称。
@@ -25,7 +25,7 @@ HLS 改写、播放器鉴权、资源引用、缓存、并发限制和流量统�
 4. 在 `registry.go` 的 `definitions` 中注册一次。目录接口、添加页面、身份验证和播放分发会自动使用它，不需要新增前端来源类型或数据库枚举。
 5. 添加供应方测试及必要的中继回归，更新来源文档。不要修改已经发布的来源 ID；频道名称和实际地址可以更新，播放时由目录提供最新地址。
 
-内置添加 API 接收 `provider_id` 和 `channel_ids`，服务器从目录取名称与 URL。对已存在频道的编辑仅调整用户设置，来源身份不可切换；需要自定义 URL 时另建通用频道。
+网站来源添加 API 接收 `provider_id` 和 `channel_ids`，服务器从目录取名称与 URL。对已存在频道的编辑仅调整用户设置，来源身份不可切换；需要自定义 URL 时另建通用频道。
 
 ## 动态会话约定
 
@@ -41,7 +41,7 @@ HLS 改写、播放器鉴权、资源引用、缓存、并发限制和流量统�
 
 ## 升级与测试
 
-数据库和备份只有当前版本 5，没有自动升级。`UpgradeLegacy` 用于批量添加时识别与内置目录相同的通用地址，避免重复添加。版本 5 备份导入时验证注册身份、代理引用和来源代理设置，失败不做部分更新。
+数据库和备份只有当前版本 5，没有自动升级。`UpgradeLegacy` 用于批量添加时识别与网站来源目录相同的通用地址，避免重复添加。版本 5 备份导入时验证注册身份、代理引用和来源代理设置，失败不做部分更新。
 
 使用模拟 HTTP 来源检查目录有效性、非法身份、直连和中继、请求头、代理、刷新撤销及重复添加；动态来源再检查 Cookie 隔离、到期恢复、并发和失败限次。迁移测试检查固定频道 ID、播放设置、订阅、密码、流量和回滚。真实网络验证只证明当次请求可用，不能替代 VLC 解码和长期播放测试。
 

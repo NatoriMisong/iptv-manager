@@ -8,7 +8,7 @@ import (
 func parseBuiltinChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []core.Channel, error) {
 	catalog, ok := provider.Lookup(req.ProviderID)
 	if !ok || req.SourceType != "builtin" || req.Text != "" || len(req.ChannelIDs) == 0 || len(req.ChannelIDs) > maxBulkChannels {
-		return core.BulkChannelResult{}, nil, invalid("请选择有效的内置直播源和频道")
+		return core.BulkChannelResult{}, nil, invalid("请选择有效的网站直播源和频道")
 	}
 	if req.Group == "" {
 		req.Group = catalog.Name
@@ -21,7 +21,7 @@ func parseBuiltinChannels(req core.BulkChannelRequest) (core.BulkChannelResult, 
 	for i, key := range req.ChannelIDs {
 		item, ok := provider.ChannelInfo(req.ProviderID, key)
 		if !ok {
-			return core.BulkChannelResult{}, nil, invalid("内置频道不存在")
+			return core.BulkChannelResult{}, nil, invalid("网站来源频道不存在")
 		}
 		// The proxy of built-in channels is configured per provider, not per channel.
 		ch, err := normalizeChannel(core.Channel{SourceType: "builtin", ProviderID: req.ProviderID, ProviderChannelID: key, Name: item.Name, URL: item.URL, Group: req.Group, Mode: req.Mode, Enabled: true, Proxy: core.DirectProxy})

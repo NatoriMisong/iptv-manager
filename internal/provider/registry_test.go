@@ -24,7 +24,7 @@ func TestRegisteredCatalogAndFixedSourceContract(t *testing.T) {
 				t.Fatal("invalid catalog channel")
 			}
 			keys[item.ID] = true
-			if c.ID == "tvb" || c.ID == "hoy" {
+			if c.ID == "tvb" || c.ID == "hoy" || c.ID == "tdm" {
 				continue
 			}
 			ch := core.Channel{SourceType: "builtin", ProviderID: c.ID, ProviderChannelID: item.ID, URL: "https://untrusted.example/ignored"}
