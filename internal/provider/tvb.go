@@ -2,13 +2,11 @@ package provider
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -16,11 +14,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"iptv-manager/internal/core"
-	"iptv-manager/internal/source"
 )
 
 // TVB session state is deliberately kept out of SQLite and configuration
@@ -62,39 +58,8 @@ func newTVBResolver(factory func(string) (*http.Client, error)) *tvbResolver {
 	return &tvbResolver{sessions: make(map[string]*tvbSession), fetches: make(chan struct{}, 2), client: factory, now: time.Now}
 }
 
-// A configured proxy resolves TVB's allowed hosts, including its AES key host.
-// Direct connections retain the actual dial-IP guard. Generic URL sources
-// continue to use their separate, more general destination checks.
 func newTVBClient(proxy string) (*http.Client, error) {
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	transport := &http.Transport{ForceAttemptHTTP2: true, MaxIdleConns: 16, MaxIdleConnsPerHost: 8, IdleConnTimeout: 60 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 15 * time.Second, MaxResponseHeaderBytes: 64 * 1024, DisableCompression: true}
-	if proxy != "" {
-		p, err := url.Parse(proxy)
-		if err != nil {
-			return nil, errors.New("代理地址无效")
-		}
-		transport.Proxy = http.ProxyURL(p)
-	} else {
-		dialer.ControlContext = func(_ context.Context, _, addr string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(addr)
-			if err != nil {
-				return err
-			}
-			if !source.PublicAddress(net.ParseIP(host)) {
-				return errors.New("上游解析到了非公网地址")
-			}
-			return nil
-		}
-	}
-	transport.DialContext = dialer.DialContext
-	client := &http.Client{Transport: transport, Timeout: 35 * time.Second}
-	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 {
-			return errors.New("TVB 重定向过多")
-		}
-		return validateTVBURL(req.URL.String())
-	}
-	return client, nil
+	return newProviderClient(proxy, validateTVBURL)
 }
 
 // Cookie operations and revocation share a lock: a late upstream response
@@ -366,7 +331,7 @@ func (m *tvbResolver) extract(ctx context.Context, e *tvbSession, proxy string) 
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("TVB 接口请求失败（%s），请检查出口、代理或网络", tvbNetworkReason(err))
+		return fmt.Errorf("TVB 接口请求失败（%s），请检查出口、代理或网络", providerNetworkReason(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -416,19 +381,6 @@ func (m *tvbResolver) extract(ctx context.Context, e *tvbSession, proxy string) 
 	return nil
 }
 
-type tvbResponseBody struct {
-	io.ReadCloser
-	stop   func() bool
-	cancel context.CancelFunc
-}
-
-func (b *tvbResponseBody) Close() error {
-	err := b.ReadCloser.Close()
-	b.stop()
-	b.cancel()
-	return err
-}
-
 func (e *tvbSession) Fetch(ctx context.Context, raw string, rangeHeader string) (*http.Response, error) {
 	if !e.Active() {
 		return nil, ErrRevoked
@@ -455,10 +407,10 @@ func (e *tvbSession) Fetch(ctx context.Context, raw string, rangeHeader string) 
 		if !e.Active() {
 			return nil, ErrRevoked
 		}
-		slog.Warn("TVB 媒体请求失败", "channel", e.channel, "host", req.URL.Hostname(), "reason", tvbNetworkReason(err))
+		slog.Warn("TVB 媒体请求失败", "channel", e.channel, "host", req.URL.Hostname(), "reason", providerNetworkReason(err))
 		return nil, errors.New("TVB 媒体请求失败，请检查出口和网络")
 	}
-	resp.Body = &tvbResponseBody{ReadCloser: resp.Body, stop: stop, cancel: cancel}
+	resp.Body = &providerResponseBody{ReadCloser: resp.Body, stop: stop, cancel: cancel}
 	for _, cookie := range e.jar.Cookies(req.URL) {
 		if cookie.Name == "hdntl" && e.cookieLogged.CompareAndSwap(false, true) {
 			slog.Info("TVB Cookie 会话已建立", "channel", e.channel, "tvb_channel", e.code)
@@ -473,7 +425,7 @@ func (e *tvbSession) Fetch(ctx context.Context, raw string, rangeHeader string) 
 func tvbMediaRequest(client *http.Client, req *http.Request, channel string) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
 		resp, err := client.Do(req)
-		if err == nil || tvbNetworkReason(err) != "tls_handshake_failure" || attempt >= 2 || req.Context().Err() != nil {
+		if err == nil || providerNetworkReason(err) != "tls_handshake_failure" || attempt >= 2 || req.Context().Err() != nil {
 			return resp, err
 		}
 		slog.Warn("TVB TLS 握手失败，准备重试", "channel", channel, "host", req.URL.Hostname(), "retry", attempt+1)
@@ -485,33 +437,6 @@ func tvbMediaRequest(client *http.Client, req *http.Request, channel string) (*h
 		case <-timer.C:
 		}
 	}
-}
-
-func tvbNetworkReason(err error) string {
-	var remote *net.OpError
-	if errors.As(err, &remote) && remote.Op == "remote error" && remote.Err.Error() == "tls: handshake failure" {
-		return "tls_handshake_failure"
-	}
-	var timeout net.Error
-	if errors.As(err, &timeout) && timeout.Timeout() {
-		return "timeout"
-	}
-	var dns *net.DNSError
-	if errors.As(err, &dns) {
-		return "dns_error"
-	}
-	var certificate *tls.CertificateVerificationError
-	if errors.As(err, &certificate) {
-		return "tls_certificate_error"
-	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return "connection_closed"
-	}
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
-		return fmt.Sprintf("transport_%T", urlErr.Err)
-	}
-	return "network_error"
 }
 
 func (m *tvbResolver) Resolve(ctx context.Context, ch core.Channel, settings core.Settings, config string) (Playback, error) {

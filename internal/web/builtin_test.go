@@ -36,15 +36,23 @@ func TestBuiltinSourcesImportThroughBulkAPI(t *testing.T) {
 	w := request(handler, "GET", "/api/builtin-sources", "", cookie, "", "")
 	var catalog struct {
 		Sources []struct {
-			ID, Name   string
-			SourceType string `json:"source_type"`
-			Channels   []struct{ ID, Name, URL string }
+			ID, Name    string
+			SourceType  string `json:"source_type"`
+			DefaultMode string `json:"default_mode"`
+			Channels    []struct{ ID, Name, URL string }
 		}
 	}
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &catalog) != nil || len(catalog.Sources) == 0 {
 		t.Fatalf("invalid catalog: %d %s", w.Code, w.Body.String())
 	}
+	foundHOY := false
 	for _, source := range catalog.Sources {
+		if source.ID == "hoy" {
+			foundHOY = true
+			if source.DefaultMode != "relay" || len(source.Channels) != 3 || source.Channels[0].ID != "76" || source.Channels[1].ID != "77" || source.Channels[2].ID != "78" {
+				t.Fatal("HOY catalog incomplete or incorrect default mode")
+			}
+		}
 		kind := source.SourceType
 		if kind == "" {
 			kind = "stream"
@@ -87,5 +95,8 @@ func TestBuiltinSourcesImportThroughBulkAPI(t *testing.T) {
 	}
 	if len(media.invalidated) != 0 {
 		t.Fatal("catalog import affected existing streams")
+	}
+	if !foundHOY {
+		t.Fatal("HOY missing from builtin API")
 	}
 }

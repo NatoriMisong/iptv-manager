@@ -8,7 +8,7 @@ import (
 )
 
 // Register a new broadcaster here; web/store/media consume the same registry.
-var definitions = []definition{tdmDefinition(), tvbDefinition(), hkstvDefinition()}
+var definitions = []definition{tdmDefinition(), tvbDefinition(), hoyDefinition(), hkstvDefinition()}
 
 func Catalogs() []Catalog {
 	result := make([]Catalog, 0, len(definitions))
