@@ -180,10 +180,10 @@ func normalizeChannel(ch core.Channel) (core.Channel, error) {
 		}
 	}
 	if ch.Mode == "" {
-		ch.Mode = "inherit"
+		ch.Mode = "relay"
 	}
-	if ch.Mode != "inherit" && ch.Mode != "relay" && ch.Mode != "direct" {
-		return ch, invalid("channel mode must be inherit, relay or direct")
+	if ch.Mode != "relay" && ch.Mode != "direct" {
+		return ch, invalid("channel mode must be relay or direct")
 	}
 	if !validQuality(ch.Quality, true) {
 		return ch, invalid("unsupported channel quality")
@@ -230,9 +230,6 @@ func normalizeSettings(s core.Settings) (core.Settings, error) {
 		u.Path = ""
 		s.BaseURL = u.String()
 	}
-	if s.DefaultMode != "relay" && s.DefaultMode != "direct" {
-		return s, invalid("default mode must be relay or direct")
-	}
 	if !validQuality(s.DefaultQuality, false) {
 		return s, invalid("unsupported default quality")
 	}
@@ -242,7 +239,6 @@ func normalizeSettings(s core.Settings) (core.Settings, error) {
 	if !tokenPattern.MatchString(s.PlaybackToken) {
 		return s, invalid("playback token requires 32–256 URL-safe letters, digits, underscores or hyphens")
 	}
-	s.LegacyProxy = ""
 	s = completeSettings(s)
 	if len(s.Proxies) > maxProxies {
 		return s, invalid("at most %d proxies can be saved", maxProxies)

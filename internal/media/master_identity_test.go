@@ -101,10 +101,10 @@ func TestIntegrationRenewedMasterURLsInBothModes(t *testing.T) {
 				}
 			}))
 			defer upstream.Close()
-			_, local, _, res := integrationSetup(t, upstream)
+			_, local, repo, res := integrationSetup(t, upstream)
 			res.results[0].VideoURL = upstream.URL + "/video720.m3u8?itag=232&sig=old"
 			res.results[0].VideoFormat = resolver.VideoFormat{Codec: "avc1.4D401F", Width: 1280, FPS: 29.97}
-			resp, master := integrationGet(t, local.Client(), integrationWatch(local, mode), nil)
+			resp, master := integrationGet(t, local.Client(), integrationWatch(repo, local, mode), nil)
 			if resp.StatusCode != 200 || strings.Contains(master, "sig=old") || strings.Count(master, "#EXT-X-STREAM-INF:") != 1 {
 				t.Fatalf("failed to select renewed master: %d %s", resp.StatusCode, master)
 			}
@@ -142,7 +142,7 @@ func TestMasterSelectionRefreshIsBoundedAndRecovers(t *testing.T) {
 					fmt.Fprint(w, splitMaster("/current/", true))
 				}))
 				defer upstream.Close()
-				repo := &refreshRepo{ch: core.Channel{ID: "one", Enabled: true}, settings: core.Settings{DefaultMode: mode, PlaybackToken: "test-token"}}
+				repo := &refreshRepo{ch: core.Channel{ID: "one", Enabled: true, Mode: mode}, settings: core.Settings{PlaybackToken: "test-token"}}
 				result := resolver.Result{URL: upstream.URL + "/master.m3u8", VideoURL: upstream.URL + "/old/video720.m3u8", Height: 720, ExpiresAt: time.Now().Add(time.Hour), VideoFormat: resolver.VideoFormat{Codec: "avc1", Width: 1280}}
 				res := &refreshResolver{current: result, next: result}
 				if recovers {

@@ -46,11 +46,11 @@ func TestGenericStreamDirectAndHLSRelaySkipResolver(t *testing.T) {
 	repo.channels[0].URL = upstream.URL + "/entry"
 	c := *local.Client()
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	resp, _ := integrationGet(t, &c, integrationWatch(local, "direct"), nil)
+	resp, _ := integrationGet(t, &c, integrationWatch(repo, local, "direct"), nil)
 	if resp.StatusCode != 307 || resp.Header.Get("Location") != repo.channels[0].URL || calls.Load() != 0 || res.calls != 0 {
 		t.Fatal("direct source was fetched or resolved")
 	}
-	resp, master := integrationGet(t, local.Client(), integrationWatch(local, "relay"), nil)
+	resp, master := integrationGet(t, local.Client(), integrationWatch(repo, local, "relay"), nil)
 	links := integrationLinks(master)
 	if resp.StatusCode != 200 || len(links) != 2 || strings.Contains(master, upstream.URL) {
 		t.Fatalf("master rewrite: %d %s", resp.StatusCode, master)
@@ -79,7 +79,7 @@ func TestGenericStreamDirectAndHLSRelaySkipResolver(t *testing.T) {
 	if resp.StatusCode != 410 {
 		t.Fatalf("missing source remained playable: %d", resp.StatusCode)
 	}
-	resp, _ = integrationGet(t, local.Client(), integrationWatch(local, "direct"), nil)
+	resp, _ = integrationGet(t, local.Client(), integrationWatch(repo, local, "direct"), nil)
 	if resp.StatusCode != 404 {
 		t.Fatal("missing direct source remained playable")
 	}
@@ -100,7 +100,7 @@ func TestContinuousHTTPStreamHasIndependentViewers(t *testing.T) {
 	repo.channels[0].URL = upstream.URL
 	client := &http.Client{Timeout: 2 * time.Second}
 	for range 2 {
-		resp, err := client.Get(integrationWatch(local, "relay"))
+		resp, err := client.Get(integrationWatch(repo, local, "relay"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -125,7 +125,7 @@ func TestGenericRelayBlocksUnsafeResources(t *testing.T) {
 	srv.options.ValidateStreamURL = srv.options.ValidateURL
 	repo.channels[0].SourceType = "stream"
 	repo.channels[0].URL = upstream.URL
-	resp, _ := integrationGet(t, local.Client(), integrationWatch(local, "relay"), nil)
+	resp, _ := integrationGet(t, local.Client(), integrationWatch(repo, local, "relay"), nil)
 	if resp.StatusCode != 502 || res.calls != 0 {
 		t.Fatalf("unsafe resource accepted: %d", resp.StatusCode)
 	}

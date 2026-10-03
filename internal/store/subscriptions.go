@@ -231,7 +231,7 @@ func (s *Store) ApplySubscription(ctx context.Context, sub core.Subscription, li
 		seen[entry.Key] = true
 		ch, exists := old[entry.Key]
 		if !exists {
-			ch = core.Channel{SubscriptionID: sub.ID, SourceKey: entry.Key, Enabled: true, Mode: "inherit", Proxy: core.DirectProxy, SortOrder: next}
+			ch = core.Channel{SubscriptionID: sub.ID, SourceKey: entry.Key, Enabled: true, Mode: "relay", Proxy: core.DirectProxy, SortOrder: next}
 			next++
 			ch.ID, err = randomHex(12)
 			if err != nil {

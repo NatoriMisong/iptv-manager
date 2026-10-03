@@ -140,14 +140,6 @@ func (s *Server) playlist(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	mode := r.URL.Query().Get("mode")
-	if mode == "" {
-		mode = "default"
-	}
-	if mode != "default" && mode != "relay" && mode != "direct" {
-		fail(w, 400, "播放模式无效")
-		return
-	}
 	if settings.BaseURL == "" {
 		fail(w, 503, "请先在设置中填写服务访问地址")
 		return
@@ -165,7 +157,8 @@ func (s *Server) playlist(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		fmt.Fprintf(&body, "#EXTINF:-1 tvg-id=\"%s\" tvg-name=\"%s\" group-title=\"%s\" tvg-logo=\"%s\",%s\n", ch.ID, ch.Name, ch.Group, ch.Logo, ch.Name)
-		q := url.Values{"token": {settings.PlaybackToken}, "mode": {mode}}
+		// Each channel plays by its own mode; the playlist carries no override.
+		q := url.Values{"token": {settings.PlaybackToken}}
 		fmt.Fprintf(&body, "%s/watch/%s?%s\n", settings.BaseURL, url.PathEscape(ch.ID), q.Encode())
 	}
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl; charset=utf-8")
@@ -188,12 +181,9 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "频道不存在或已停用")
 		return
 	}
-	mode := r.URL.Query().Get("mode")
-	if mode == "" || mode == "default" {
-		mode = ch.Mode
-		if mode == "" || mode == "inherit" {
-			mode = settings.DefaultMode
-		}
+	mode := ch.Mode
+	if mode == "" {
+		mode = "relay"
 	}
 	if mode != "relay" && mode != "direct" {
 		fail(w, 400, "播放模式无效")

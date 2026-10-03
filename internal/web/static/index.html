@@ -40,9 +40,9 @@
           <article class="stat"><span class="stat-label">月度流量预算</span><div><strong id="budget-value">—</strong><span class="stat-unit">GB</span></div><progress id="budget-progress" max="100" value="0" aria-label="流量预算使用比例"></progress><p id="budget-note" class="muted">预算用于提示，不会自动中断播放</p></article>
         </div>
         <section class="panel subscription-panel" aria-labelledby="subscription-title">
-          <div class="subscription-intro"><span class="tile-icon" aria-hidden="true">↗</span><div><h2 id="subscription-title">你的 IPTV 订阅</h2><p class="muted">复制地址，在 VLC 的「打开网络串流」中粘贴。</p></div></div>
-          <div class="subscription-options"><button data-subscription="default" class="outline">复制默认订阅</button><button data-subscription="relay" class="outline">复制中继订阅</button><button data-subscription="direct" class="outline">复制直连订阅</button></div>
-          <p class="tiny muted subscription-help">中继：设备只连接服务器。直连：设备需能访问原始直播源，且来源允许该设备使用。地址包含播放令牌，请仅分享给自己的设备。</p>
+          <div class="subscription-intro"><span class="tile-icon" aria-hidden="true">↗</span><div><h2 id="subscription-title">你的 IPTV 订阅</h2><p class="muted">复制地址，在 VLC 的「打开网络串流」中粘贴。每个频道按自己的播放方式工作。</p></div></div>
+          <div class="subscription-options"><button id="copy-subscription" class="outline">复制订阅地址</button></div>
+          <p class="tiny muted subscription-help">服务器中继：设备只连接服务器。客户端直连：设备需能访问原始直播源，且来源允许该设备使用。播放方式在每个频道的编辑中选择，默认为服务器中继。地址包含播放令牌，请仅分享给自己的设备。</p>
         </section>
         <section class="panel channels-panel" aria-labelledby="channels-title">
           <div class="panel-heading"><div><h2 id="channels-title">频道列表 <span id="table-count" class="count-pill">0</span></h2><p class="muted">支持直连或中继；内置源统一管理，YouTube 按需解析，通用源直接连接。</p></div><button id="reload" class="quiet">↻ 刷新状态</button></div>
@@ -67,11 +67,11 @@
         <div id="proxy-list" class="subscription-list"></div>
       </section>
       <section id="view-settings" hidden>
-        <div class="page-heading"><div><p class="eyebrow">MAKE IT YOURS</p><h1>服务设置</h1><p class="muted">配置默认播放方式、访问地址和流量预算。出站代理在“代理设置”页面管理。</p></div></div>
+        <div class="page-heading"><div><p class="eyebrow">MAKE IT YOURS</p><h1>服务设置</h1><p class="muted">配置访问地址、YouTube 默认画质和流量预算。播放方式逐频道设置，出站代理在“代理设置”页面管理。</p></div></div>
         <div class="settings-layout">
           <form id="settings-form" class="panel settings-card">
             <h2>连接与播放</h2><label for="base-url">公开访问地址</label><input id="base-url" name="base_url" type="url" required placeholder="http://tv.example.com:9000"><p class="field-help">填写播放器可访问的 HTTP 地址（域名或 IP，包含端口），不包含末尾路径。自行配置 HTTPS 后，填写对应的 HTTPS 地址。首次使用请先保存此设置。</p>
-            <div class="form-grid"><div><label for="default-mode">默认播放方式</label><select id="default-mode" name="default_mode"><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div><label for="default-quality">YouTube 默认画质上限</label><select id="default-quality" name="default_quality"><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
+            <label for="default-quality">YouTube 默认画质上限</label><select id="default-quality" name="default_quality"><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select><p class="field-help">仅用于 YouTube 来源且频道画质选择“使用全局设置”时。</p>
             <label for="monthly-budget">月度流量预算（GB）</label><input id="monthly-budget" name="monthly_budget_gb" type="number" min="1" max="1000000" required><p class="field-help">每月按 UTC 时间统计。服务商可能采用不同的计费口径。</p>
             <div class="form-footer"><button class="primary" type="submit">保存设置</button><span id="settings-error" class="error" role="alert"></span></div>
           </form>
@@ -89,7 +89,7 @@
     <p id="channel-proxy-note" class="field-help" hidden>此频道的出站代理由“内置直播源”页面按来源统一设置。</p>
     <label for="channel-name">频道名称</label><input id="channel-name" name="name" maxlength="120" required placeholder="例如：新闻频道">
     <label for="channel-url">直播来源地址</label><input id="channel-url" name="url" type="url" required placeholder="https://example.com/live.m3u8"><p id="channel-source-help" class="field-help"></p>
-    <div class="form-grid"><div><label for="channel-group">分组</label><input id="channel-group" name="group" maxlength="80" placeholder="新闻"></div><div><label for="channel-mode">播放方式</label><select id="channel-mode" name="mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div></div>
+    <div class="form-grid"><div><label for="channel-group">分组</label><input id="channel-group" name="group" maxlength="80" placeholder="新闻"></div><div><label for="channel-mode">播放方式</label><select id="channel-mode" name="mode"><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div></div>
     <div class="form-grid"><div id="channel-quality-field"><label for="channel-quality">YouTube 画质上限</label><select id="channel-quality" name="quality"><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div><div><label for="channel-enabled">频道状态</label><select id="channel-enabled" name="enabled"><option value="true">启用</option><option value="false">停用</option></select></div></div>
     <details><summary>更多选项</summary><label for="channel-logo">频道图标地址</label><input id="channel-logo" name="logo" type="url" placeholder="https://example.com/logo.png"><div id="channel-proxy-field"><label for="channel-proxy">出站代理</label><select id="channel-proxy" name="proxy"></select><p class="field-help">服务器解析来源、获取清单和中继分片时使用。代理在“代理设置”页面添加；客户端直连时不经过服务器代理。</p></div></details>
     <p id="channel-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button type="submit" class="primary">保存频道</button></div>
@@ -100,7 +100,7 @@
     <p id="builtin-description" class="field-help"></p><a id="builtin-website" class="field-help" target="_blank" rel="noopener noreferrer">查看官方网站 ↗</a>
     <div class="builtin-toolbar"><span id="builtin-count" class="muted tiny" role="status"></span><button id="builtin-select-all" type="button" class="quiet">全选</button><button id="builtin-select-none" type="button" class="quiet">清空</button></div>
     <div id="builtin-channels" class="builtin-channels" role="group" aria-label="选择内置频道"></div>
-    <div class="form-grid"><div><label for="builtin-group">分组</label><input id="builtin-group" maxlength="150" required></div><div><label for="builtin-mode">播放方式</label><select id="builtin-mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div></div>
+    <div class="form-grid"><div><label for="builtin-group">分组</label><input id="builtin-group" maxlength="150" required></div><div><label for="builtin-mode">播放方式</label><select id="builtin-mode"><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div></div>
     <p class="field-help">重复来源自动跳过。出站代理在“内置直播源”页面按来源统一设置。</p><p id="builtin-help" class="field-help"></p>
     <p id="builtin-error" class="error" role="alert"></p><p id="builtin-result" role="status" hidden></p>
     <div class="dialog-footer"><button type="button" class="outline close-dialog">关闭</button><button id="builtin-submit" type="submit" class="primary">添加所选频道</button></div>
@@ -122,7 +122,7 @@
       <textarea id="bulk-text" name="text" rows="6" required maxlength="262144" spellcheck="false" aria-describedby="bulk-help" placeholder="中天新闻,https://www.youtube.com/watch?v=vr3XyVCR4T0&#10;东森新闻 51,https://youtu.be/V1p33hqPrUk&#10;https://www.youtube.com/watch?v=…"></textarea>
       <p id="bulk-help" class="field-help">支持英文逗号、中文逗号或 Tab 分隔名称与链接；空行忽略。仅填写链接时自动生成名称，可添加后编辑。</p>
       <div class="form-grid"><div><label for="bulk-group">统一分组（可选）</label><input id="bulk-group" name="group" maxlength="150" placeholder="例如：新闻"></div><div><label for="bulk-proxy">出站代理</label><select id="bulk-proxy" name="proxy"></select></div></div>
-      <div class="form-grid"><div><label for="bulk-mode">播放方式</label><select id="bulk-mode" name="mode"><option value="inherit">使用全局设置</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div id="bulk-quality-field"><label for="bulk-quality">YouTube 画质上限</label><select id="bulk-quality" name="quality"><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
+      <div class="form-grid"><div><label for="bulk-mode">播放方式</label><select id="bulk-mode" name="mode"><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div id="bulk-quality-field"><label for="bulk-quality">YouTube 画质上限</label><select id="bulk-quality" name="quality"><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
       <p class="field-help">新频道默认启用，本批统一使用所选代理，按输入顺序追加。播放时才检查来源是否可用。</p>
       <p id="bulk-error" class="error" role="alert"></p>
       <section id="bulk-results" aria-label="批量添加结果" hidden><p id="bulk-summary" role="status" tabindex="-1"></p><ol id="bulk-result-list"></ol></section>

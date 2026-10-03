@@ -110,7 +110,7 @@ func TestNestedPlaylistRefreshPreservesRenditionAfterReordering(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	repo := &refreshRepo{ch: core.Channel{ID: "one", URL: "https://www.youtube.com/watch?v=vr3XyVCR4T0", Enabled: true, Mode: "relay", Quality: 720}, settings: core.Settings{PlaybackToken: "test-token", DefaultMode: "relay", DefaultQuality: 720}}
+	repo := &refreshRepo{ch: core.Channel{ID: "one", URL: "https://www.youtube.com/watch?v=vr3XyVCR4T0", Enabled: true, Mode: "relay", Quality: 720}, settings: core.Settings{PlaybackToken: "test-token", DefaultQuality: 720}}
 	res := &refreshResolver{current: resolver.Result{URL: upstream.URL + "/old-master.m3u8", ExpiresAt: time.Now().Add(time.Hour)}, next: resolver.Result{URL: upstream.URL + "/new-master.m3u8", ExpiresAt: time.Now().Add(time.Hour)}}
 	s := New(repo, res, refreshOptions())
 	gateway := httptest.NewServer(s.Handler())

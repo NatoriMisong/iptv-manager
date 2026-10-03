@@ -91,7 +91,7 @@ func setup(t *testing.T) (http.Handler, *memoryRepo, *fakeMedia) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo := &memoryRepo{hash: string(hash), settings: core.Settings{PlaybackToken: "existing-token", DefaultMode: "relay", DefaultQuality: 720, MonthlyBudgetGB: 800}, channels: []core.Channel{{ID: "test-channel", Name: "测试", Enabled: true}}}
+	repo := &memoryRepo{hash: string(hash), settings: core.Settings{PlaybackToken: "existing-token", DefaultQuality: 720, MonthlyBudgetGB: 800}, channels: []core.Channel{{ID: "test-channel", Name: "测试", Enabled: true}}}
 	media := &fakeMedia{}
 	handler, err := New(repo, media, Options{SecureCookies: true, Version: "test"})
 	if err != nil {
@@ -231,7 +231,7 @@ func TestLoginRateLimitCannotBeBypassedWithForwardedFor(t *testing.T) {
 func TestSettingsCannotOverwritePlaybackToken(t *testing.T) {
 	h, repo, media := setup(t)
 	cookie, csrf := loginAsAdmin(t, h)
-	w := request(h, "PUT", "/api/settings", `{"default_mode":"direct","playback_token":"attacker-chosen"}`, cookie, csrf, "")
+	w := request(h, "PUT", "/api/settings", `{"default_quality":480,"playback_token":"attacker-chosen"}`, cookie, csrf, "")
 	if w.Code != 200 {
 		t.Fatalf("settings: %d %s", w.Code, w.Body.String())
 	}

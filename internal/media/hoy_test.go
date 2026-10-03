@@ -102,9 +102,9 @@ func setupHOY(t *testing.T) (*Server, *httptest.Server, *integrationRepo, *hoyFi
 	t.Helper()
 	f := &hoyFixture{t: t, api: map[string]int{}, media: map[string]int{}}
 	f.clock.Store(time.Now().Unix())
-	repo := &integrationRepo{settings: core.Settings{DefaultMode: "relay", PlaybackToken: "hoy-test"}, traffic: map[string]int64{}}
+	repo := &integrationRepo{settings: core.Settings{PlaybackToken: "hoy-test"}, traffic: map[string]int64{}}
 	for _, code := range []string{"76", "77", "78"} {
-		repo.channels = append(repo.channels, core.Channel{ID: code, SourceType: "builtin", ProviderID: "hoy", ProviderChannelID: code, URL: "https://hoy.tv/live?channel_no=" + code, Enabled: true, Mode: "inherit"})
+		repo.channels = append(repo.channels, core.Channel{ID: code, SourceType: "builtin", ProviderID: "hoy", ProviderChannelID: code, URL: "https://hoy.tv/live?channel_no=" + code, Enabled: true, Mode: "relay"})
 	}
 	srv := New(repo, &integrationResolver{}, Options{CacheBytes: 1 << 20, ProviderOptions: provider.Options{Now: f.now, ClientFactory: func(string) (*http.Client, error) { return &http.Client{Transport: tvbTransport(f.request)}, nil }}})
 	local := httptest.NewServer(srv.Handler())
@@ -123,7 +123,7 @@ func hoyWatch(local *httptest.Server, code string) string {
 }
 
 func TestHOYRelaySignsAllResourcesAndIsolatesChannels(t *testing.T) {
-	_, local, _, f := setupHOY(t)
+	_, local, repo, f := setupHOY(t)
 	for _, code := range []string{"76", "77", "78", "76"} {
 		resp, master := integrationGet(t, local.Client(), hoyWatch(local, code), nil)
 		if resp.StatusCode != 200 || strings.Contains(master, "Signature") || strings.Contains(master, "hoy.tv") || resp.Header.Get("Set-Cookie") != "" {
@@ -160,7 +160,10 @@ func TestHOYRelaySignsAllResourcesAndIsolatesChannels(t *testing.T) {
 	f.mu.Unlock()
 	client := *local.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	resp, _ := integrationGet(t, &client, hoyWatch(local, "78")+"&mode=direct", nil)
+	repo.mu.Lock()
+	repo.channels[2].Mode = "direct"
+	repo.mu.Unlock()
+	resp, _ := integrationGet(t, &client, hoyWatch(local, "78"), nil)
 	u, err := url.Parse(resp.Header.Get("Location"))
 	if err != nil || resp.StatusCode != 307 || u.Hostname() != "ch78-live-stream.hoy.tv" || u.Query().Get("Signature") != "private-78-1" || resp.Header.Get("Set-Cookie") != "" {
 		t.Fatal("direct URL not signed")

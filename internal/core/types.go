@@ -25,7 +25,7 @@ type Channel struct {
 	Logo              string `json:"logo"`
 	Enabled           bool   `json:"enabled"`
 	SortOrder         int    `json:"sort_order"`
-	Mode              string `json:"mode"`    // inherit, relay, direct
+	Mode              string `json:"mode"`    // relay (default) or direct
 	Quality           int    `json:"quality"` // 0 inherits settings
 	Proxy             string `json:"proxy"`   // direct or a saved proxy ID; built-in channels use the provider setting
 }
@@ -109,15 +109,11 @@ func (p Proxy) Address() string {
 
 type Settings struct {
 	BaseURL         string            `json:"base_url"`
-	DefaultMode     string            `json:"default_mode"`
 	DefaultQuality  int               `json:"default_quality"`
 	MonthlyBudgetGB int               `json:"monthly_budget_gb"`
 	PlaybackToken   string            `json:"playback_token"`
 	Proxies         []Proxy           `json:"proxies"`
 	ProviderProxies map[string]string `json:"provider_proxies"` // provider ID -> direct or proxy ID
-	// LegacyProxy only carries the pre-0.4 global proxy URL while a version 3
-	// database or backup is converted. It is always empty afterwards.
-	LegacyProxy string `json:"upstream_proxy,omitempty"`
 }
 
 func (s Settings) FindProxy(id string) (Proxy, bool) {

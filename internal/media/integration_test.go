@@ -79,8 +79,8 @@ func (r *integrationResolver) Invalidate(string) { r.mu.Lock(); r.invalidations+
 func integrationSetup(t *testing.T, upstream *httptest.Server, results ...string) (*Server, *httptest.Server, *integrationRepo, *integrationResolver) {
 	t.Helper()
 	repo := &integrationRepo{
-		settings: core.Settings{DefaultMode: "relay", DefaultQuality: 720, PlaybackToken: "test-playback-token", MonthlyBudgetGB: 800},
-		channels: []core.Channel{{ID: "stable-one", Name: "新闻频道", URL: "https://www.youtube.com/watch?v=vr3XyVCR4T0", Enabled: true, Mode: "inherit", Proxy: core.DirectProxy, SortOrder: 0}, {ID: "disabled", Name: "停用频道", Enabled: false, SortOrder: 1}},
+		settings: core.Settings{DefaultQuality: 720, PlaybackToken: "test-playback-token", MonthlyBudgetGB: 800},
+		channels: []core.Channel{{ID: "stable-one", Name: "新闻频道", URL: "https://www.youtube.com/watch?v=vr3XyVCR4T0", Enabled: true, Mode: "relay", Proxy: core.DirectProxy, SortOrder: 0}, {ID: "disabled", Name: "停用频道", Enabled: false, SortOrder: 1}},
 		traffic:  make(map[string]int64),
 	}
 	if len(results) == 0 {
@@ -128,8 +128,13 @@ func integrationGet(t *testing.T, client *http.Client, raw string, headers map[s
 	return resp, string(body)
 }
 
-func integrationWatch(local *httptest.Server, mode string) string {
-	return local.URL + "/watch/stable-one?token=test-playback-token&mode=" + mode
+// integrationWatch sets the playback mode on the stable test channel and
+// returns its fixed watch URL. There is no per-request mode override.
+func integrationWatch(repo *integrationRepo, local *httptest.Server, mode string) string {
+	repo.mu.Lock()
+	repo.channels[0].Mode = mode
+	repo.mu.Unlock()
+	return local.URL + "/watch/stable-one?token=test-playback-token"
 }
 
 var integrationURI = regexp.MustCompile(`URI="([^"]+)"`)
@@ -156,10 +161,10 @@ func TestIntegrationPlaylistModesKeepStableIDsAndExcludeDisabled(t *testing.T) {
 	upstream := httptest.NewServer(http.NotFoundHandler())
 	defer upstream.Close()
 	_, local, repo, _ := integrationSetup(t, upstream)
-	for _, mode := range []string{"default", "relay", "direct"} {
-		resp, body := integrationGet(t, local.Client(), local.URL+"/playlist.m3u?mode="+mode+"&token=test-playback-token", nil)
+	{
+		resp, body := integrationGet(t, local.Client(), local.URL+"/playlist.m3u?token=test-playback-token", nil)
 		if resp.StatusCode != 200 || !strings.HasPrefix(body, "#EXTM3U\n") {
-			t.Fatalf("playlist %s: %d %s", mode, resp.StatusCode, body)
+			t.Fatalf("playlist: %d %s", resp.StatusCode, body)
 		}
 		if strings.Contains(body, "disabled") || strings.Contains(body, "停用频道") {
 			t.Fatal("disabled channel in playlist")
@@ -172,7 +177,7 @@ func TestIntegrationPlaylistModesKeepStableIDsAndExcludeDisabled(t *testing.T) {
 			t.Fatalf("expected one playback link: %v", links)
 		}
 		u, _ := url.Parse(links[0])
-		if u.Path != "/watch/stable-one" || u.Query().Get("mode") != mode {
+		if u.Path != "/watch/stable-one" || u.Query().Has("mode") {
 			t.Fatalf("unexpected link: %s", links[0])
 		}
 	}
@@ -199,19 +204,17 @@ func TestIntegrationDirectRedirectDoesNotFetchMedia(t *testing.T) {
 	_, local, repo, res := integrationSetup(t, upstream)
 	client := *local.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	resp, _ := integrationGet(t, &client, integrationWatch(local, "direct"), nil)
+	resp, _ := integrationGet(t, &client, integrationWatch(repo, local, "direct"), nil)
 	if resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != upstream.URL+"/master.m3u8" {
 		t.Fatalf("direct redirect: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	if fetched.Load() != 0 || res.calls != 1 {
 		t.Fatal("direct mode downloaded media or did not resolve")
 	}
-	repo.mu.Lock()
-	repo.settings.DefaultMode = "direct"
-	repo.mu.Unlock()
-	resp, _ = integrationGet(t, &client, integrationWatch(local, "default"), nil)
-	if resp.StatusCode != 307 || fetched.Load() != 0 {
-		t.Fatal("default mode did not inherit direct setting")
+	// An empty mode means relay: the server fetches upstream instead of redirecting.
+	resp, _ = integrationGet(t, &client, integrationWatch(repo, local, ""), nil)
+	if resp.StatusCode == http.StatusTemporaryRedirect || fetched.Load() == 0 {
+		t.Fatalf("empty mode did not default to relay: %d", resp.StatusCode)
 	}
 }
 
@@ -241,8 +244,8 @@ func TestIntegrationHLSRewritesAllNestedResources(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	_, local, _, _ := integrationSetup(t, upstream)
-	queue := []string{integrationWatch(local, "relay")}
+	_, local, repo, _ := integrationSetup(t, upstream)
+	queue := []string{integrationWatch(repo, local, "relay")}
 	visited := make(map[string]bool)
 	for len(queue) > 0 {
 		raw := queue[0]
@@ -300,7 +303,7 @@ func TestIntegrationRangeCacheAndTrafficAccounting(t *testing.T) {
 	}))
 	defer upstream.Close()
 	srv, local, repo, _ := integrationSetup(t, upstream)
-	_, manifest := integrationGet(t, local.Client(), integrationWatch(local, "relay"), nil)
+	_, manifest := integrationGet(t, local.Client(), integrationWatch(repo, local, "relay"), nil)
 	link := integrationLinks(manifest)[0]
 	for i := 0; i < 2; i++ {
 		resp, body := integrationGet(t, local.Client(), link, map[string]string{"Range": "bytes=2-5"})
@@ -360,8 +363,8 @@ func TestIntegrationConcurrentSegmentRequestsShareOneFetch(t *testing.T) {
 		io.WriteString(w, "segment")
 	}))
 	defer upstream.Close()
-	_, local, _, _ := integrationSetup(t, upstream)
-	_, manifest := integrationGet(t, local.Client(), integrationWatch(local, "relay"), nil)
+	_, local, repo, _ := integrationSetup(t, upstream)
+	_, manifest := integrationGet(t, local.Client(), integrationWatch(repo, local, "relay"), nil)
 	link := integrationLinks(manifest)[0]
 	var wg sync.WaitGroup
 	start := make(chan struct{})
@@ -413,7 +416,7 @@ func TestIntegrationExpiredSourceReResolvesAndRevokesOldAccess(t *testing.T) {
 	}))
 	defer upstream.Close()
 	_, local, repo, res := integrationSetup(t, upstream, upstream.URL+"/expired.m3u8", upstream.URL+"/fresh.m3u8")
-	resp, manifest := integrationGet(t, local.Client(), integrationWatch(local, "relay"), nil)
+	resp, manifest := integrationGet(t, local.Client(), integrationWatch(repo, local, "relay"), nil)
 	// A newer source is already available from Resolve; do not invalidate it
 	// and cancel another viewer's refresh unnecessarily.
 	if resp.StatusCode != 200 || expired.Load() != 1 || res.calls != 2 || res.invalidations != 0 {

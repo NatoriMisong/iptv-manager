@@ -93,7 +93,7 @@ func TestIntegrationSplitHLSRelayAndDirect(t *testing.T) {
 			defer upstream.Close()
 			srv, local, repo, res := integrationSetup(t, upstream, upstream.URL+"/entry.m3u8")
 			res.results[0].VideoURL = upstream.URL + "/live/video720.m3u8"
-			resp, master := integrationGet(t, local.Client(), integrationWatch(local, mode), nil)
+			resp, master := integrationGet(t, local.Client(), integrationWatch(repo, local, mode), nil)
 			if resp.StatusCode != 200 || strings.Count(master, "#EXT-X-STREAM-INF:") != 1 || strings.Contains(master, "1080") || strings.Contains(master, `GROUP-ID="low"`) {
 				t.Fatalf("invalid selected master: %d %s", resp.StatusCode, master)
 			}
@@ -151,10 +151,10 @@ func TestSplitMasterRejectsForeignAudioInBothModes(t *testing.T) {
 		fmt.Fprint(w, strings.ReplaceAll(splitMaster("", false), `URI="audio.m3u8"`, `URI="http://foreign.invalid/private"`))
 	}))
 	defer upstream.Close()
-	srv, local, _, res := integrationSetup(t, upstream)
+	srv, local, repo, res := integrationSetup(t, upstream)
 	res.results[0].VideoURL = upstream.URL + "/video720.m3u8"
 	for _, mode := range []string{"relay", "direct"} {
-		resp, body := integrationGet(t, local.Client(), integrationWatch(local, mode), nil)
+		resp, body := integrationGet(t, local.Client(), integrationWatch(repo, local, mode), nil)
 		if resp.StatusCode != 502 || strings.Contains(body, "foreign.invalid") || srv.Statuses()["stable-one"].State != "error" {
 			t.Fatalf("untrusted audio was not rejected: %d %s", resp.StatusCode, body)
 		}
@@ -191,7 +191,7 @@ func TestSplitAudioAndVideoRefreshWithSameMasterAndReorderedVariants(t *testing.
 		}
 	}))
 	defer upstream.Close()
-	repo := &refreshRepo{ch: core.Channel{ID: "one", Enabled: true}, settings: core.Settings{DefaultMode: "relay", PlaybackToken: "test-token"}}
+	repo := &refreshRepo{ch: core.Channel{ID: "one", Enabled: true}, settings: core.Settings{PlaybackToken: "test-token"}}
 	res := &refreshResolver{
 		current: resolver.Result{URL: upstream.URL + "/master.m3u8", VideoURL: upstream.URL + "/old/video720.m3u8", Height: 720, ExpiresAt: time.Now().Add(time.Hour)},
 		next:    resolver.Result{URL: upstream.URL + "/master.m3u8", VideoURL: upstream.URL + "/new/video720.m3u8", Height: 720, ExpiresAt: time.Now().Add(time.Hour)},

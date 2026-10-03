@@ -514,7 +514,7 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	// The settings form never carries the token or proxy configuration.
 	setting.PlaybackToken = current.PlaybackToken
-	setting.Proxies, setting.ProviderProxies, setting.LegacyProxy = current.Proxies, current.ProviderProxies, ""
+	setting.Proxies, setting.ProviderProxies = current.Proxies, current.ProviderProxies
 	if err := s.repo.SaveSettings(r.Context(), setting); err != nil {
 		fail(w, 400, "设置无效，请检查访问地址、画质和流量预算")
 		return

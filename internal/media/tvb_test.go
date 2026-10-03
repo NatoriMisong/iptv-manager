@@ -100,9 +100,9 @@ func setupTVB(t *testing.T) (*Server, *httptest.Server, *integrationRepo, *tvbFi
 	t.Helper()
 	f := &tvbFixture{t: t, api: map[string]int{}, media: map[string]int{}}
 	f.clock.Store(time.Now().Unix())
-	repo := &integrationRepo{settings: core.Settings{DefaultMode: "relay", PlaybackToken: "tvb-test"}, traffic: map[string]int64{}}
+	repo := &integrationRepo{settings: core.Settings{PlaybackToken: "tvb-test"}, traffic: map[string]int64{}}
 	for _, code := range []string{"C", "F"} {
-		repo.channels = append(repo.channels, core.Channel{ID: code, SourceType: "builtin", ProviderID: "tvb", ProviderChannelID: code, URL: "https://news.tvb.com/tc/live/" + code, Enabled: true, Mode: "inherit"})
+		repo.channels = append(repo.channels, core.Channel{ID: code, SourceType: "builtin", ProviderID: "tvb", ProviderChannelID: code, URL: "https://news.tvb.com/tc/live/" + code, Enabled: true, Mode: "relay"})
 	}
 	srv := New(repo, &integrationResolver{}, Options{CacheBytes: 1 << 20, ProviderOptions: provider.Options{Now: f.now, ClientFactory: func(string) (*http.Client, error) { return &http.Client{Transport: tvbTransport(f.request)}, nil }}})
 	local := httptest.NewServer(srv.Handler())
@@ -116,7 +116,7 @@ func tvbWatch(local *httptest.Server, code string) string {
 }
 
 func TestTVBRelayCookieIsolationCachingAndDirect(t *testing.T) {
-	_, local, _, f := setupTVB(t)
+	_, local, repo, f := setupTVB(t)
 	for _, code := range []string{"C", "F", "C"} {
 		resp, master := integrationGet(t, local.Client(), tvbWatch(local, code), nil)
 		if resp.StatusCode != 200 || strings.Contains(master, "secret") || strings.Contains(master, "cdn.tvb.com") || resp.Header.Get("Set-Cookie") != "" {
@@ -148,7 +148,10 @@ func TestTVBRelayCookieIsolationCachingAndDirect(t *testing.T) {
 	}
 	client := *local.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	resp, _ := integrationGet(t, &client, tvbWatch(local, "F")+"&mode=direct", nil)
+	repo.mu.Lock()
+	repo.channels[1].Mode = "direct"
+	repo.mu.Unlock()
+	resp, _ := integrationGet(t, &client, tvbWatch(local, "F"), nil)
 	if resp.StatusCode != 307 || !strings.HasPrefix(resp.Header.Get("Location"), "https://cdn.tvb.com/F/") || resp.Header.Get("Set-Cookie") != "" || f.calls("F") != 1 {
 		t.Fatal("direct source/cookie handling incorrect")
 	}

@@ -7,7 +7,7 @@ func tdmDefinition() definition {
 		Website:      "https://www2.tdm.com.mo/zh-hant/live?Channel=1&type=tv",
 		Description:  "来自澳广视（TDM）官网的电视直播地址。会议直播默认不选中，可按需添加。",
 		SourceType:   "builtin",
-		DefaultMode:  "inherit",
+		DefaultMode:  "relay",
 		LinkLabel:    "原始 M3U8 ↗",
 		PlaybackHelp: "支持直连或中继，原始画质由播放器选择。",
 		Channels: []Channel{

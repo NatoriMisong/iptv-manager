@@ -109,7 +109,7 @@ func TestBulkLimitsAndValidation(t *testing.T) {
 		t.Fatalf("100-row batch: %+v %v", result, err)
 	}
 	channels, _ := s.Channels(testContext)
-	if channels[2].Mode != "inherit" || channels[2].Quality != 0 || channels[2].Proxy != core.DirectProxy {
+	if channels[2].Mode != "relay" || channels[2].Quality != 0 || channels[2].Proxy != core.DirectProxy {
 		t.Fatalf("defaults: %+v", channels[2])
 	}
 }

@@ -119,9 +119,7 @@ function renderChannels() {
     cell.append(logo, identity);
     channel.append(cell);
     const mode = node('td');
-    const effectiveMode = ch.mode === 'inherit' ? state.settings.default_mode : ch.mode;
-    mode.append(node('span', 'badge', effectiveMode === 'direct' ? '客户端直连' : '服务器中继'));
-    if (ch.mode === 'inherit') mode.append(node('div', 'channel-meta', '继承全局'));
+    mode.append(node('span', 'badge', ch.mode === 'direct' ? '客户端直连' : '服务器中继'));
     mode.append(node('div', 'channel-meta', `代理：${proxyLabel(channelProxyRef(ch))}`));
     const originalQuality = ch.source_type !== 'youtube';
     const quality = node('td', '', originalQuality ? '原始画质' : `${ch.quality || state.settings.default_quality}p`);
@@ -175,7 +173,7 @@ function editChannel(channel) {
   form.reset();
   $('#channel-error').textContent = '';
   $('#channel-dialog-title').textContent = channel ? '编辑频道' : '添加频道';
-  const data = channel || { id: '', source_type: 'stream', name: '', url: '', group: '', logo: '', enabled: true, mode: 'inherit', quality: 0, proxy: 'direct', sort_order: state.channels?.length || 0 };
+  const data = channel || { id: '', source_type: 'stream', name: '', url: '', group: '', logo: '', enabled: true, mode: 'relay', quality: 0, proxy: 'direct', sort_order: state.channels?.length || 0 };
   Object.entries(data).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
   fillProxySelect($('#channel-proxy'), data.proxy);
   const managed = !!channel?.subscription_id;
@@ -248,7 +246,7 @@ function renderBuiltinSources() {
   $('#builtin-help').textContent = source.playback_help || '';
   $('#builtin-website').href = source.website;
   $('#builtin-group').value = source.name;
-  $('#builtin-mode').value = source.default_mode || 'inherit';
+  $('#builtin-mode').value = source.default_mode === 'direct' ? 'direct' : 'relay';
   source.channels.forEach(channel => {
     const row = node('div', 'builtin-channel');
     const label = node('label', 'builtin-check');
@@ -382,21 +380,20 @@ function renderBulkResult(result) {
   $('#bulk-summary').focus();
   $('#bulk-submit').scrollIntoView({ block: 'nearest' });
 }
-function subscription(mode) {
+function subscription() {
   const base = (state.settings.base_url || location.origin).replace(/\/+$/, '');
   const url = new URL(`${base}/playlist.m3u`);
-  url.searchParams.set('mode', mode);
   url.searchParams.set('token', state.settings.playback_token);
   return url.toString();
 }
-async function copySubscription(mode) {
+async function copySubscription() {
   if (!state.settings.base_url) {
     $('[data-view="settings"]').click();
     $('#base-url').focus();
     toast('请先保存播放器可访问的公开地址，再复制订阅', true);
     return;
   }
-  const value = subscription(mode);
+  const value = subscription();
   try {
     if (!navigator.clipboard) throw new Error('manual');
     await navigator.clipboard.writeText(value);
@@ -468,7 +465,7 @@ $$('[data-view]').forEach(button => button.addEventListener('click', () => {
   ['channels', 'subscriptions', 'builtin', 'proxies', 'settings'].forEach(view => { $(`#view-${view}`).hidden = button.dataset.view !== view; });
 }));
 $$('.close-dialog').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
-$$('[data-subscription]').forEach(button => button.addEventListener('click', () => copySubscription(button.dataset.subscription)));
+$('#copy-subscription').addEventListener('click', () => copySubscription());
 $('#channel-form').addEventListener('submit', async event => {
   event.preventDefault();
   let data = Object.fromEntries(new FormData(event.currentTarget));

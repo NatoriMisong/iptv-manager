@@ -48,7 +48,7 @@ func TestSeedAndPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.DefaultMode != "relay" || settings.DefaultQuality != 720 || settings.MonthlyBudgetGB != 800 || len(settings.PlaybackToken) != 64 {
+	if settings.DefaultQuality != 720 || settings.MonthlyBudgetGB != 800 || len(settings.PlaybackToken) != 64 {
 		t.Fatalf("invalid defaults: %+v", settings)
 	}
 	settings.BaseURL = "https://tv.example.com/"
@@ -148,7 +148,7 @@ func TestStableChannelIDs(t *testing.T) {
 }
 
 func TestUnsupportedSchemaIsNotModified(t *testing.T) {
-	for _, version := range []int{1, 2, 5} {
+	for _, version := range []int{1, 3, 4, 6} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "iptv-manager.db")
 			db, err := sql.Open("sqlite", path)
@@ -226,9 +226,9 @@ func TestImportIsAtomicAndExcludesAdmin(t *testing.T) {
 			case "settings":
 				backup.Settings.BaseURL = "https://tv.example.com/subpath"
 			case "older-version":
-				backup.Version = 2
+				backup.Version = 4
 			case "newer-version":
-				backup.Version = 5
+				backup.Version = 6
 			}
 			if err := s.Import(testContext, backup); !errors.Is(err, ErrValidation) {
 				t.Fatalf("import error = %v", err)

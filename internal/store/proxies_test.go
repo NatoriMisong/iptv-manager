@@ -1,11 +1,8 @@
 package store
 
 import (
-	"encoding/json"
 	"errors"
-	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"iptv-manager/internal/core"
@@ -143,167 +140,49 @@ func TestBulkAddUsesRequestedProxy(t *testing.T) {
 	}
 }
 
-func TestSchemaV3ProxyMigrationAndV3Backup(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "old.db")
-	s, err := Open(path)
+func TestImportRejectsOtherVersionsAndDanglingProxies(t *testing.T) {
+	s := testStore(t)
+	p, err := s.SaveProxy(testContext, core.Proxy{Name: "代理", Scheme: "socks5", Host: "proxy.example", Port: 1080})
 	if err != nil {
 		t.Fatal(err)
 	}
-	youtube, err := s.SaveChannel(testContext, core.Channel{Name: "YT", URL: "https://www.youtube.com/watch?v=vr3XyVCR4T0", Enabled: true})
-	if err != nil {
+	if _, err := s.SaveChannel(testContext, core.Channel{Name: "频道", SourceType: "stream", URL: "https://example.com/live.m3u8", Enabled: true, Proxy: p.ID}); err != nil {
 		t.Fatal(err)
 	}
-	streamA, err := s.SaveChannel(testContext, core.Channel{Name: "A", SourceType: "stream", URL: "https://a.example/live.m3u8", Enabled: true})
-	if err != nil {
+	if err := s.SetProviderProxy(testContext, "tvb", p.ID); err != nil {
 		t.Fatal(err)
 	}
-	streamD, err := s.SaveChannel(testContext, core.Channel{Name: "D", SourceType: "stream", URL: "https://d.example/live.m3u8", Enabled: true})
-	if err != nil {
-		t.Fatal(err)
+	before, err := s.Export(testContext)
+	if err != nil || before.Version != 5 {
+		t.Fatalf("export = %+v, %v", before, err)
 	}
-	tvb, err := s.AddChannels(testContext, core.BulkChannelRequest{SourceType: "builtin", ProviderID: "tvb", ChannelIDs: []string{"C", "F"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	hk, err := s.AddChannels(testContext, core.BulkChannelRequest{SourceType: "builtin", ProviderID: "hkstv", ChannelIDs: []string{"mutfysrq"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sub1, err := s.SaveSubscription(testContext, core.Subscription{Name: "一", URL: "https://example.com/1.m3u", IntervalMinutes: 60, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sub2, err := s.SaveSubscription(testContext, core.Subscription{Name: "二", URL: "https://example.com/2.m3u", IntervalMinutes: 60, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	settings, err := s.Settings(testContext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Rewrite the database into its version 3 shape: URL and inherit proxies, a global proxy URL.
-	legacy := map[string]any{"base_url": "", "default_mode": "relay", "default_quality": 720, "upstream_proxy": "http://global.example:3128", "monthly_budget_gb": 800, "playback_token": settings.PlaybackToken}
-	payload, _ := json.Marshal(legacy)
-	for _, stmt := range []struct {
-		sql  string
-		args []any
-	}{
-		{`UPDATE settings SET payload=? WHERE id=1`, []any{string(payload)}},
-		{`UPDATE channels SET proxy='inherit' WHERE id IN (?,?,?)`, []any{youtube.ID, hk.Results[0].ChannelID, tvb.Results[1].ChannelID}},
-		{`UPDATE channels SET proxy='socks5://a.example:1080' WHERE id=?`, []any{streamA.ID}},
-		{`UPDATE channels SET proxy='http://user:pw@b.example:8080' WHERE id=?`, []any{tvb.Results[0].ChannelID}},
-		{`UPDATE channels SET proxy='direct' WHERE id=?`, []any{streamD.ID}},
-		{`PRAGMA user_version=3`, nil},
-	} {
-		if _, err := s.db.Exec(stmt.sql, stmt.args...); err != nil {
-			t.Fatal(err)
+	for _, version := range []int{2, 3, 4, 6} {
+		old := before
+		old.Version = version
+		if err := s.Import(testContext, old); !errors.Is(err, ErrValidation) {
+			t.Fatalf("backup version %d accepted: %v", version, err)
 		}
 	}
-	sub1.Proxy, sub2.Proxy = "inherit", "socks5://a.example:1080"
-	for _, sub := range []core.Subscription{sub1, sub2} {
-		if err := writeSubscription(testContext, s.db, sub); err != nil {
-			t.Fatal(err)
-		}
+	dangling := before
+	dangling.Channels = append([]core.Channel(nil), before.Channels...)
+	dangling.Channels[len(dangling.Channels)-1].Proxy = "ffffffffffffffffffffffff"
+	if err := s.Import(testContext, dangling); !errors.Is(err, ErrValidation) {
+		t.Fatalf("dangling channel proxy accepted: %v", err)
 	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
+	orphan := before
+	orphan.Settings.ProviderProxies = map[string]string{"tvb": "ffffffffffffffffffffffff"}
+	if err := s.Import(testContext, orphan); !errors.Is(err, ErrValidation) {
+		t.Fatalf("dangling provider proxy accepted: %v", err)
 	}
-	upgraded, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	settings, err = upgraded.Settings(testContext)
-	if err != nil || len(settings.Proxies) != 3 || settings.LegacyProxy != "" {
-		t.Fatalf("migrated settings = %+v, %v", settings, err)
-	}
-	byURL := map[string]core.Proxy{}
-	for _, p := range settings.Proxies {
-		byURL[p.URL()] = p
-	}
-	global, a, b := byURL["http://global.example:3128"], byURL["socks5://a.example:1080"], byURL["http://user:pw@b.example:8080"]
-	if global.ID == "" || a.ID == "" || b.ID == "" || global.Name != "global.example:3128" || a.Name != "a.example:1080" || b.Username != "user" || b.Password != "pw" {
-		t.Fatalf("converted proxies = %+v", settings.Proxies)
-	}
-	channels, err := upgraded.Channels(testContext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	refs := map[string]string{}
-	for _, ch := range channels {
-		refs[ch.ID] = ch.Proxy
-	}
-	if refs[youtube.ID] != global.ID || refs[streamA.ID] != a.ID || refs[streamD.ID] != core.DirectProxy || refs[tvb.Results[0].ChannelID] != core.DirectProxy || refs[tvb.Results[1].ChannelID] != core.DirectProxy || refs[hk.Results[0].ChannelID] != core.DirectProxy {
-		t.Fatalf("channel references = %v", refs)
-	}
-	if settings.ProviderProxies["tvb"] != b.ID || settings.ProviderProxies["hkstv"] != global.ID || settings.ProviderProxies["tdm"] != core.DirectProxy {
-		t.Fatalf("provider proxies = %v", settings.ProviderProxies)
-	}
-	subs, err := upgraded.Subscriptions(testContext)
-	if err != nil || len(subs) != 2 {
-		t.Fatal(err)
-	}
-	for _, sub := range subs {
-		if (sub.ID == sub1.ID && sub.Proxy != global.ID) || (sub.ID == sub2.ID && sub.Proxy != a.ID) {
-			t.Fatalf("subscription proxy not converted: %+v", sub)
-		}
-	}
-	var version int
-	if err := upgraded.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 4 {
-		t.Fatal("schema not upgraded to version 4")
-	}
-	before, err := upgraded.Export(testContext)
-	if err != nil || before.Version != 4 {
-		t.Fatal(err)
-	}
-	if err := upgraded.Close(); err != nil {
-		t.Fatal(err)
-	}
-	reopened, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reopened.Close()
-	if again, err := reopened.Export(testContext); err != nil || !reflect.DeepEqual(before, again) {
-		t.Fatal("migration not idempotent")
-	}
-
-	// A version 3 backup receives the same conversion; version 2 is no longer accepted.
-	token := strings.Repeat("a", 40)
-	v3 := core.Backup{Version: 3, Settings: core.Settings{DefaultMode: "relay", DefaultQuality: 720, MonthlyBudgetGB: 800, PlaybackToken: token, LegacyProxy: "socks5://g.example:1080"},
-		Channels: []core.Channel{
-			{ID: "aaaaaaaaaaaa", Name: "x", SourceType: "stream", URL: "https://x.example/live.m3u8", Enabled: true, Proxy: "inherit", SortOrder: 0},
-			{ID: "bbbbbbbbbbbb", Name: "C", SourceType: "builtin", ProviderID: "tvb", ProviderChannelID: "C", URL: "https://news.tvb.com/tc/live/C", Enabled: true, Proxy: "http://b.example:8080", SortOrder: 1},
-		},
-		Subscriptions: []core.Subscription{{ID: "cccccccccccc", Name: "订阅", URL: "https://example.com/list.m3u", IntervalMinutes: 60, Enabled: true, Proxy: "inherit"}},
-	}
-	fresh := testStore(t)
-	if err := fresh.Import(testContext, v3); err != nil {
-		t.Fatal(err)
-	}
-	imported, err := fresh.Export(testContext)
-	if err != nil || len(imported.Settings.Proxies) != 2 {
-		t.Fatalf("imported = %+v, %v", imported.Settings, err)
-	}
-	byURL = map[string]core.Proxy{}
-	for _, p := range imported.Settings.Proxies {
-		byURL[p.URL()] = p
-	}
-	g, bb := byURL["socks5://g.example:1080"], byURL["http://b.example:8080"]
-	if imported.Channels[0].Proxy != g.ID || imported.Channels[1].Proxy != core.DirectProxy || imported.Settings.ProviderProxies["tvb"] != bb.ID || imported.Subscriptions[0].Proxy != g.ID {
-		t.Fatalf("v3 backup conversion = %+v", imported)
-	}
-	v2 := v3
-	v2.Version = 2
-	if err := fresh.Import(testContext, v2); !errors.Is(err, ErrValidation) {
-		t.Fatalf("version 2 backup accepted: %v", err)
-	}
-	dangling := imported
-	dangling.Channels = append([]core.Channel(nil), imported.Channels...)
-	dangling.Channels[0].Proxy = "ffffffffffffffffffffffff"
-	if err := fresh.Import(testContext, dangling); !errors.Is(err, ErrValidation) {
-		t.Fatalf("dangling proxy backup accepted: %v", err)
-	}
-	if after, err := fresh.Export(testContext); err != nil || !reflect.DeepEqual(imported, after) {
+	after, err := s.Export(testContext)
+	if err != nil || !reflect.DeepEqual(before, after) {
 		t.Fatal("rejected backup modified data")
+	}
+	restored := testStore(t)
+	if err := restored.Import(testContext, before); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := restored.Export(testContext); err != nil || !reflect.DeepEqual(before.Settings.Proxies, again.Settings.Proxies) || again.Settings.ProviderProxies["tvb"] != p.ID {
+		t.Fatalf("proxies not restored: %+v %v", again.Settings, err)
 	}
 }

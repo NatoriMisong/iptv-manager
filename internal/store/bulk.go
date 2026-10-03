@@ -116,10 +116,10 @@ func parseBulkChannels(req core.BulkChannelRequest) (core.BulkChannelResult, []c
 		return core.BulkChannelResult{}, nil, invalid("分组不能超过 150 字节，或包含双引号、控制字符")
 	}
 	if req.Mode == "" {
-		req.Mode = "inherit"
+		req.Mode = "relay"
 	}
-	if req.Mode != "inherit" && req.Mode != "relay" && req.Mode != "direct" {
-		return core.BulkChannelResult{}, nil, invalid("播放方式必须为继承全局、服务器中继或客户端直连")
+	if req.Mode != "relay" && req.Mode != "direct" {
+		return core.BulkChannelResult{}, nil, invalid("播放方式必须为服务器中继或客户端直连")
 	}
 	if !validQuality(req.Quality, true) {
 		return core.BulkChannelResult{}, nil, invalid("不支持此画质上限")

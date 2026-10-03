@@ -91,8 +91,8 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version != 0 && version != 3 && version != 4 {
-		return fmt.Errorf("unsupported database schema %d; IPTV Manager requires version 3, version 4 or a new database", version)
+	if version != 0 && version != 5 {
+		return fmt.Errorf("unsupported database schema %d; IPTV Manager 0.4 requires schema version 5 or a new database", version)
 	}
 	for _, stmt := range []string{
 		`CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, group_name TEXT NOT NULL, logo TEXT NOT NULL, enabled INTEGER NOT NULL, sort_order INTEGER NOT NULL, mode TEXT NOT NULL, quality INTEGER NOT NULL, proxy TEXT NOT NULL, source_type TEXT NOT NULL, subscription_id TEXT NOT NULL DEFAULT '', source_key TEXT NOT NULL DEFAULT '', source_missing INTEGER NOT NULL DEFAULT 0, provider_id TEXT NOT NULL DEFAULT '', provider_channel_id TEXT NOT NULL DEFAULT '')`,
@@ -107,11 +107,6 @@ func (s *Store) initialize(ctx context.Context) error {
 			return err
 		}
 	}
-	if version == 3 {
-		if err := migrateProxies(ctx, tx); err != nil {
-			return err
-		}
-	}
 	var count int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings`).Scan(&count); err != nil {
 		return err
@@ -121,7 +116,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		settings := completeSettings(core.Settings{DefaultMode: "relay", DefaultQuality: 720, MonthlyBudgetGB: 800, PlaybackToken: token})
+		settings := completeSettings(core.Settings{DefaultQuality: 720, MonthlyBudgetGB: 800, PlaybackToken: token})
 		data, err := json.Marshal(settings)
 		if err != nil {
 			return err
@@ -134,13 +129,13 @@ func (s *Store) initialize(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			ch := core.Channel{ID: id, Name: source.name, URL: "https://www.youtube.com/watch?v=" + source.id, SourceType: "youtube", Group: "新闻", Enabled: true, SortOrder: i, Mode: "inherit", Proxy: core.DirectProxy}
+			ch := core.Channel{ID: id, Name: source.name, URL: "https://www.youtube.com/watch?v=" + source.id, SourceType: "youtube", Group: "新闻", Enabled: true, SortOrder: i, Mode: "relay", Proxy: core.DirectProxy}
 			if err := insertChannel(ctx, tx, ch); err != nil {
 				return err
 			}
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 4`); err != nil {
+	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 5`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -319,12 +314,7 @@ func (s *Store) SaveSettings(ctx context.Context, settings core.Settings) error 
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(settings)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.ExecContext(ctx, `UPDATE settings SET payload=? WHERE id=1`, string(data))
-	return err
+	return writeSettings(ctx, s.db, settings)
 }
 
 func (s *Store) AdminHash(ctx context.Context) (string, error) {
@@ -351,7 +341,7 @@ func (s *Store) Export(ctx context.Context) (core.Backup, error) {
 		return core.Backup{}, err
 	}
 	defer tx.Rollback()
-	b := core.Backup{Version: 4, Channels: make([]core.Channel, 0)}
+	b := core.Backup{Version: 5, Channels: make([]core.Channel, 0)}
 	b.Settings, err = readSettings(ctx, tx)
 	if err != nil {
 		return b, err
@@ -383,7 +373,7 @@ func (s *Store) Export(ctx context.Context) (core.Backup, error) {
 }
 
 func (s *Store) Import(ctx context.Context, b core.Backup) error {
-	if b.Version != 3 && b.Version != 4 {
+	if b.Version != 5 {
 		return invalid("unsupported backup version")
 	}
 	if len(b.Channels) > 1000 {
@@ -391,13 +381,6 @@ func (s *Store) Import(ctx context.Context, b core.Backup) error {
 	}
 	if len(b.Subscriptions) > 20 {
 		return invalid("too many subscriptions")
-	}
-	var err error
-	if b.Version == 3 {
-		b.Settings, b.Channels, b.Subscriptions, err = convertLegacyProxies(b.Settings, append([]core.Channel(nil), b.Channels...), append([]core.Subscription(nil), b.Subscriptions...))
-		if err != nil {
-			return err
-		}
 	}
 	settings, err := normalizeSettings(b.Settings)
 	if err != nil {

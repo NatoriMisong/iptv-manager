@@ -75,7 +75,7 @@ func TestProxyAPI(t *testing.T) {
 		t.Fatalf("state: %d %s", w.Code, w.Body.String())
 	}
 	// The settings form cannot drop or alter proxies.
-	if w := request(h, "PUT", "/api/settings", `{"base_url":"https://tv.example","default_mode":"relay","default_quality":720,"monthly_budget_gb":800}`, cookie, csrf, ""); w.Code != 200 {
+	if w := request(h, "PUT", "/api/settings", `{"base_url":"https://tv.example","default_quality":720,"monthly_budget_gb":800}`, cookie, csrf, ""); w.Code != 200 {
 		t.Fatalf("settings: %d %s", w.Code, w.Body.String())
 	}
 	settings, err := db.Settings(ctx)
@@ -105,7 +105,7 @@ func TestProxyAPI(t *testing.T) {
 	if w := request(h, "PUT", "/api/providers/tvb/proxy", `{"proxy":"ffffffffffffffffffffffff"}`, cookie, csrf, ""); w.Code != 400 {
 		t.Fatalf("dangling provider proxy: %d", w.Code)
 	}
-	w = request(h, "POST", "/api/channels", `{"name":"频道","source_type":"stream","url":"https://example.com/live.m3u8","enabled":true,"mode":"inherit","proxy":"`+p.ID+`"}`, cookie, csrf, "")
+	w = request(h, "POST", "/api/channels", `{"name":"频道","source_type":"stream","url":"https://example.com/live.m3u8","enabled":true,"mode":"relay","proxy":"`+p.ID+`"}`, cookie, csrf, "")
 	var ch core.Channel
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &ch) != nil || ch.Proxy != p.ID {
 		t.Fatalf("channel with proxy: %d %s", w.Code, w.Body.String())
