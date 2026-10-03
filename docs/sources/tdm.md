@@ -1,10 +1,8 @@
 # 澳广视（TDM）电视直播来源
 
-提取日期：2026-10-02。
+来源：[官方直播页面](https://www2.tdm.com.mo/zh-hant/live?Channel=1&type=tv) 和页面调用的 [官方频道接口](https://www2.tdm.com.mo/api/v1.0/live/categories)。以下地址均取自接口的 `onlineFeed` 字段，是官网公开提供的原始 M3U8，不经过 YouTube 解析器。
 
-来源：[官方直播页面](https://www2.tdm.com.mo/zh-hant/live?Channel=1&type=tv) 和页面调用的 [官方频道接口](https://www2.tdm.com.mo/api/v1.0/live/categories)。以下地址均取自接口的 `onlineFeed` 字段；另核对了澳视澳门当前节目接口，其地址与频道列表一致。
-
-这些是官网公开提供的原始 M3U8 地址，不需要经过 YouTube 解析器。可以使用 [完整 M3U 列表](tdm.m3u)，或在管理页依次选择“添加频道 → 内置直播源 → 澳视澳门”。
+可以使用 [完整 M3U 列表](tdm.m3u)，或在管理页依次选择“添加频道 → 内置直播源 → 澳视澳门”。
 
 | 官方频道名称 | 原始 M3U8 |
 |---|---|
@@ -20,8 +18,13 @@
 | 立法會直播 | [https://live3.tdm.com.mo/tv/ch21.live/playlist.m3u8](https://live3.tdm.com.mo/tv/ch21.live/playlist.m3u8) |
 | Directo das Reuniões da Assembleia de Macau | [https://live3.tdm.com.mo/tv/ch22.live/playlist.m3u8](https://live3.tdm.com.mo/tv/ch22.live/playlist.m3u8) |
 
-本次通过指定的 SOCKS5 代理成功读取官网和频道接口，提取了 11 路电视地址，未收录页面中的电台分类。两路立法会频道属于会议直播，是否有节目以官网安排为准，在内置来源选择器中默认不勾选。
+目录收录接口中的 11 路电视，不含电台分类。两路立法会频道属于会议直播，是否有节目以官网安排为准，在内置来源选择器中默认不勾选。
 
-**提取地址成功，实际播放尚未验证。** 本次对 11 路 M3U8 的请求均在连接阶段超时，没有取得清单内容或媒体分片。开发网络的本地 DNS 结果与公网 DNS 不一致；使用公网 DNS 返回的三个 CDN 地址做临时验证仍超时，没有修改系统 DNS、关闭 TLS 校验或把 IP 固定到程序中。因此不能把这些结果判断为地址失效、需要 Cookies 或已验证可播，仍需在实际服务器网络上验证。
+## 在项目中使用
 
-内置目录仅保存原始域名地址，不内置开发用代理或 Cookies。添加的频道继承全局代理；可以在频道编辑中单独设置。目录在 `internal/provider/tdm.go` 中随程序版本维护。频道以 `builtin` 类型和 `provider_id=tdm` 保存，来源字段只读；官网若更改地址，应更新模块目录，或另建通用频道使用自定义地址。
+频道以 `builtin` 类型和 `provider_id=tdm` 保存，来源字段只读；目录在 `internal/provider/tdm.go` 中随程序版本维护。添加的频道继承全局代理，可以在频道编辑中单独设置。官网若更改地址，应更新模块目录，或另建通用频道使用自定义地址。
+
+## 已知限制
+
+- 地址取自官方接口，但直播 CDN（`live3.tdm.com.mo`）对部分网络出口会连接超时。遇到超时时不应判断为地址失效或需要 Cookies，先在实际服务器网络上确认主清单、子清单和分片能否读取。
+- 部分开发网络的本地 DNS 结果与公网 DNS 不一致；项目只保存域名地址，不内置固定 IP、代理或 Cookies，也不关闭 TLS 校验。

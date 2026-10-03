@@ -1,5 +1,5 @@
 #EXTM3U
-# 澳广视（TDM）官方电视直播地址；提取日期：2026-10-02。会议直播按节目安排提供。
+# 澳广视（TDM）官方电视直播地址，取自官方频道接口。会议直播按节目安排提供。
 #EXTINF:-1 tvg-id="tdm-ctvp" group-title="澳视澳门",澳視澳門 91台
 https://live3.tdm.com.mo/ch1/ch1.live/playlist.m3u8
 #EXTINF:-1 tvg-id="tdm-ptvp" group-title="澳视澳门",澳視葡文 92台
