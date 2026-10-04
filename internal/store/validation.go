@@ -213,9 +213,7 @@ func channelURL(kind, raw string) (string, error) {
 	if err := source.ValidateURL(raw); err != nil {
 		return "", invalid("%s", err)
 	}
-	u, _ := url.Parse(raw)
-	u.Host = strings.ToLower(u.Host)
-	return u.String(), nil
+	return source.Normalize(raw), nil
 }
 
 func normalizeSettings(s core.Settings) (core.Settings, error) {

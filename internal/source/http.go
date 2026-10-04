@@ -16,8 +16,8 @@ import (
 
 func ValidateURL(raw string) error {
 	u, err := url.Parse(raw)
-	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Fragment != "" || len(raw) > 8192 {
-		return errors.New("来源必须为有效的 HTTP/HTTPS 地址，不能包含用户名密码或片段")
+	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || len(raw) > 8192 {
+		return errors.New("来源必须为有效的 HTTP/HTTPS 地址，不能包含用户名密码")
 	}
 	if strings.ContainsAny(raw, "\"<>\\") || strings.IndexFunc(raw, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) >= 0 || strings.HasSuffix(u.Host, ":") {
 		return errors.New("来源地址包含不支持的字符")
@@ -33,6 +33,23 @@ func ValidateURL(raw string) error {
 		return errors.New("来源必须使用公网地址")
 	}
 	return nil
+}
+
+// Normalize lowercases the scheme and host of a URL that passed ValidateURL
+// while keeping the path, query and fragment byte-for-byte. Re-serialising
+// through url.URL would percent-encode characters such as "|" or "{" that
+// some upstreams expect verbatim, and players rely on suffixes like "#.m3u8".
+func Normalize(raw string) string {
+	i := strings.Index(raw, "://")
+	if i < 0 {
+		return raw
+	}
+	rest := raw[i+3:]
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	return strings.ToLower(raw[:i]) + "://" + strings.ToLower(rest[:end]) + rest[end:]
 }
 
 func PublicAddress(ip net.IP) bool {

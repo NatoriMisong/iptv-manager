@@ -37,6 +37,16 @@ func cleanText(raw string, limit int) string {
 	return b.String()
 }
 
+// resolveLink keeps absolute addresses exactly as written so that characters
+// such as "|" or a trailing "#.m3u8" survive; only relative references are
+// resolved against the list URL.
+func resolveLink(raw string, u *url.URL, base *url.URL) string {
+	if u.IsAbs() || base == nil {
+		return raw
+	}
+	return base.ResolveReference(u).String()
+}
+
 // ParseM3U reads an IPTV channel list, not an HLS rendition/segment playlist.
 func ParseM3U(body []byte, base *url.URL) (Playlist, error) {
 	var result Playlist
@@ -101,26 +111,25 @@ func ParseM3U(body []byte, base *url.URL) (Playlist, error) {
 			result.Skipped++
 			continue
 		}
-		if base != nil {
-			u = base.ResolveReference(u)
-		}
-		entry.URL = u.String()
+		entry.URL = resolveLink(line, u, base)
 		if ValidateURL(entry.URL) != nil {
 			result.Skipped++
 			continue
 		}
+		entry.URL = Normalize(entry.URL)
 		if entry.Name == "" {
-			entry.Name = cleanText(u.Hostname()+u.Path, 300)
+			final, _ := url.Parse(entry.URL)
+			entry.Name = cleanText(final.Hostname()+final.Path, 300)
 		}
 		if entry.Logo != "" {
 			logo, err := url.Parse(entry.Logo)
-			if err == nil && base != nil {
-				logo = base.ResolveReference(logo)
-			}
-			if err != nil || ValidateURL(logo.String()) != nil || len(logo.String()) > 2048 {
+			if err != nil {
 				entry.Logo = ""
 			} else {
-				entry.Logo = logo.String()
+				entry.Logo = resolveLink(entry.Logo, logo, base)
+				if ValidateURL(entry.Logo) != nil || len(entry.Logo) > 2048 {
+					entry.Logo = ""
+				}
 			}
 		}
 		if entry.Key != "" {

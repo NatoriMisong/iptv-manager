@@ -15,6 +15,10 @@ func TestStreamChannelsAndBulk(t *testing.T) {
 	if err != nil || ch.Quality != 0 || !ch.IsStream() {
 		t.Fatalf("stream: %+v %v", ch, err)
 	}
+	verbatim, err := s.SaveChannel(testContext, core.Channel{Name: "片段", SourceType: "stream", URL: "https://CDN.example/live/{台}|a.php?shk_cid=hdgd01#.m3u8", Enabled: true})
+	if err != nil || verbatim.URL != "https://cdn.example/live/{台}|a.php?shk_cid=hdgd01#.m3u8" {
+		t.Fatalf("stream URL re-encoded: %+v %v", verbatim, err)
+	}
 	result, err := s.AddChannels(testContext, core.BulkChannelRequest{SourceType: "stream", Text: "https://cdn.example/live.m3u8?token=a%2Bb\n另一个,http://media.example:8080/live.ts\nhttps://cdn.example/other.m3u8"})
 	if err != nil || result.Added != 2 || result.Skipped != 1 {
 		t.Fatalf("bulk stream: %+v %v", result, err)
