@@ -161,6 +161,45 @@ func (s *Store) DeleteSubscription(ctx context.Context, id string) error {
 	}
 	return tx.Commit()
 }
+
+// ClearSubscription removes every channel imported by the subscription but
+// keeps the subscription itself; the next sync re-imports the list with new
+// channel IDs. Returns the removed channel IDs for cache invalidation.
+func (s *Store) ClearSubscription(ctx context.Context, id string) ([]string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := scanSubscription(tx.QueryRowContext(ctx, `SELECT payload FROM subscriptions WHERE id=?`, id)); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM channels WHERE subscription_id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0)
+	for rows.Next() {
+		var channel string
+		if err := rows.Scan(&channel); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, channel)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE subscription_id=?`, id); err != nil {
+		return nil, err
+	}
+	return ids, tx.Commit()
+}
 func (s *Store) SubscriptionAttempt(ctx context.Context, sub core.Subscription, message string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

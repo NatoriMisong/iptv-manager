@@ -49,6 +49,10 @@ func (r *memoryRepo) SaveSubscription(_ context.Context, sub core.Subscription) 
 	return sub, nil
 }
 func (r *memoryRepo) DeleteSubscription(context.Context, string) error { r.changes++; return nil }
+func (r *memoryRepo) ClearSubscription(context.Context, string) ([]string, error) {
+	r.changes++
+	return nil, nil
+}
 func (r *memoryRepo) SaveProxy(_ context.Context, p core.Proxy) (core.Proxy, error) {
 	r.changes++
 	if p.ID == "" {

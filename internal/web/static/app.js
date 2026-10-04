@@ -130,7 +130,7 @@ function renderChannels() {
     const identity = node('div');
     const name = node('div', 'channel-name', ch.name);
     name.title = ch.name;
-    const sourceName = ch.subscription_id ? `M3U · ${state.subscriptions?.find(s => s.id === ch.subscription_id)?.name || '订阅'}` : ch.source_type === 'builtin' ? (builtinSources.find(source => source.id === ch.provider_id)?.name || '网站直播') : ch.source_type === 'stream' ? '通用直播' : 'YouTube';
+    const sourceName = ch.subscription_id ? `订阅 · ${state.subscriptions?.find(s => s.id === ch.subscription_id)?.name || '订阅'}` : ch.source_type === 'builtin' ? (builtinSources.find(source => source.id === ch.provider_id)?.name || '网站直播') : ch.source_type === 'stream' ? '通用直播' : 'YouTube';
     identity.append(name, node('div', 'channel-meta', `${ch.group || '未分组'} · ${sourceName}`));
     cell.append(logo, identity);
     channel.append(cell);
@@ -192,7 +192,7 @@ function renderSelection() {
   const managed = chosen.filter(ch => ch.subscription_id).length;
   $('#selection-count').textContent = managed ? `已选择 ${chosen.length} 个频道（含 ${managed} 个订阅频道）` : `已选择 ${chosen.length} 个频道`;
   $('#selection-delete').disabled = chosen.length === managed;
-  $('#selection-delete').title = chosen.length === managed ? '订阅频道随 M3U 订阅同步，不能单独删除' : '';
+  $('#selection-delete').title = chosen.length === managed ? '订阅频道随自定义订阅同步，不能单独删除' : '';
 }
 async function bulkUpdate(body, message) {
   const ids = [...selected];
@@ -434,7 +434,7 @@ function editSubscription(sub) {
   Object.entries(data).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
   fillProxySelect($('#subscription-proxy'), data.proxy);
   $('#subscription-error').textContent = '';
-  $('#subscription-dialog-title').textContent = sub ? '编辑 M3U 订阅' : '添加 M3U 订阅';
+  $('#subscription-dialog-title').textContent = sub ? '编辑自定义订阅' : '添加自定义订阅';
   $('#subscription-dialog').showModal();
 }
 function renderSubscriptions() {
@@ -456,7 +456,14 @@ function renderSubscriptions() {
       buttons.querySelectorAll('button').forEach(b => { b.disabled = true; });
       try { await api(`/subscriptions/${encodeURIComponent(sub.id)}/sync`, { method: 'POST' }); toast('订阅同步完成'); }
       finally { await loadState({ background: true }); buttons.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
-    }), action('删除订阅', `删除订阅 ${sub.name}`, async () => {
+    }));
+    const clear = action('清理频道', `清理订阅 ${sub.name} 导入的频道`, async () => {
+      if (!confirm(`从频道列表移除订阅「${sub.name}」导入的 ${channels.length} 个频道？订阅本身保留，下次同步会按列表重新导入，这些频道的播放地址将失效并重新生成。`)) return;
+      const result = await api(`/subscriptions/${encodeURIComponent(sub.id)}/clear`, { method: 'POST' });
+      await loadState({ background: true }); toast(`已移除 ${result.deleted} 个频道，订阅已保留`);
+    }, 'quiet danger');
+    clear.disabled = channels.length === 0;
+    buttons.append(clear, action('删除订阅', `删除订阅 ${sub.name}`, async () => {
       if (!confirm(`删除订阅「${sub.name}」及其 ${channels.length} 个频道？对应的播放地址将失效。`)) return;
       await api(`/subscriptions/${encodeURIComponent(sub.id)}`, { method: 'DELETE' });
       await loadState({ background: true }); toast('订阅及关联频道已删除');
@@ -667,7 +674,7 @@ $('#restore-file').addEventListener('change', event => perform(async () => {
   event.target.value = '';
   if (!file) return;
   if (file.size > 32 * 1024 * 1024) throw new Error('备份文件不能超过 32 MB');
-  if (!confirm('导入会替换当前频道、M3U 订阅、设置和播放令牌（不修改管理密码）。请确认文件来自可信来源。继续？')) return;
+  if (!confirm('导入会替换当前频道、自定义订阅、设置和播放令牌（不修改管理密码）。请确认文件来自可信来源。继续？')) return;
   let data;
   try { data = JSON.parse(await file.text()); } catch { throw new Error('文件不是有效的 JSON 备份'); }
   await api('/restore', { method: 'POST', body: data });

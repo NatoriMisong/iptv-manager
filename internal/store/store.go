@@ -347,7 +347,7 @@ func (s *Store) DeleteChannels(ctx context.Context, ids []string) error {
 			return err
 		}
 		if subscription != "" {
-			return invalid("订阅频道随 M3U 订阅同步，不能单独删除；可以停用频道或删除整个订阅")
+			return invalid("订阅频道随自定义订阅同步，不能单独删除；可以停用频道，或在订阅页清理频道、删除订阅")
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE id=?`, id); err != nil {
 			return err

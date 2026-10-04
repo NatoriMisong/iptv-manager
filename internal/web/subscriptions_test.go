@@ -3,10 +3,12 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
 	"iptv-manager/internal/core"
+	"iptv-manager/internal/source"
 	"iptv-manager/internal/store"
 )
 
@@ -27,7 +29,7 @@ func TestSubscriptionAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	cookie, csrf := loginAsAdmin(t, h)
-	for _, route := range []struct{ method, path string }{{"POST", "/api/subscriptions"}, {"PUT", "/api/subscriptions/test"}, {"DELETE", "/api/subscriptions/test"}, {"POST", "/api/subscriptions/test/sync"}} {
+	for _, route := range []struct{ method, path string }{{"POST", "/api/subscriptions"}, {"PUT", "/api/subscriptions/test"}, {"DELETE", "/api/subscriptions/test"}, {"POST", "/api/subscriptions/test/sync"}, {"POST", "/api/subscriptions/test/clear"}} {
 		for _, auth := range []bool{false, true} {
 			c := cookie
 			if !auth {
@@ -68,6 +70,28 @@ func TestSubscriptionAPI(t *testing.T) {
 	w = request(h, "POST", "/api/channels/"+ch.ID+"/refresh", `{}`, cookie, csrf, "")
 	if w.Code != 200 {
 		t.Fatal("generic refresh failed")
+	}
+	imported, err := db.ApplySubscription(ctx, sub, source.Playlist{Entries: []source.Entry{{Key: "id:a", Name: "A", URL: "https://cdn.example/a.m3u8"}, {Key: "id:b", Name: "B", URL: "https://cdn.example/b.m3u8"}}})
+	if err != nil || len(imported) != 2 {
+		t.Fatalf("import: %v %v", imported, err)
+	}
+	if w = request(h, "POST", "/api/subscriptions/missing00000/clear", `{}`, cookie, csrf, ""); w.Code != 404 {
+		t.Fatalf("clear unknown subscription: %d", w.Code)
+	}
+	w = request(h, "POST", "/api/subscriptions/"+sub.ID+"/clear", `{}`, cookie, csrf, "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"deleted":2`) {
+		t.Fatalf("clear subscription: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := db.Subscription(ctx, sub.ID); err != nil {
+		t.Fatal("clear removed the subscription itself")
+	}
+	for _, id := range imported {
+		if _, err := db.Channel(ctx, id); err == nil {
+			t.Fatal("clear kept an imported channel")
+		}
+	}
+	if _, err := db.Channel(ctx, ch.ID); err != nil {
+		t.Fatal("clear removed a manual channel")
 	}
 	w = request(h, "DELETE", "/api/subscriptions/"+sub.ID, `{}`, cookie, csrf, "")
 	if w.Code != 200 {

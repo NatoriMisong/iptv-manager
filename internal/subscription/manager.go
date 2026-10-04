@@ -65,7 +65,7 @@ func (m *Manager) sync(ctx context.Context, id string, automatic bool) error {
 			for _, id := range ids {
 				m.invalidate(id)
 			}
-			slog.Info("M3U 订阅同步成功", "subscription", sub.ID, "channels", len(list.Entries), "changed", len(ids), "skipped", list.Skipped)
+			slog.Info("自定义订阅同步成功", "subscription", sub.ID, "channels", len(list.Entries), "changed", len(ids), "skipped", list.Skipped)
 			return nil
 		}
 		if errors.Is(err, store.ErrValidation) {
@@ -78,7 +78,7 @@ func (m *Manager) sync(ctx context.Context, id string, automatic bool) error {
 	recordCtx, stop := context.WithTimeout(context.Background(), 3*time.Second)
 	defer stop()
 	_ = m.repo.SubscriptionAttempt(recordCtx, sub, err.Error())
-	slog.Warn("M3U 订阅同步失败", "subscription", sub.ID, "error", err.Error())
+	slog.Warn("自定义订阅同步失败", "subscription", sub.ID, "error", err.Error())
 	return err
 }
 func (m *Manager) fetch(ctx context.Context, sub core.Subscription) (source.Playlist, error) {

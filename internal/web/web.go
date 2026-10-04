@@ -45,6 +45,7 @@ type Repository interface {
 	Subscriptions(context.Context) ([]core.Subscription, error)
 	SaveSubscription(context.Context, core.Subscription) (core.Subscription, error)
 	DeleteSubscription(context.Context, string) error
+	ClearSubscription(context.Context, string) ([]string, error)
 	UpdateChannels(context.Context, core.BulkChannelUpdate) error
 	DeleteChannels(context.Context, []string) error
 	SaveProxy(context.Context, core.Proxy) (core.Proxy, error)
@@ -113,6 +114,7 @@ func New(repo Repository, media Media, opts Options) (http.Handler, error) {
 	mux.HandleFunc("PUT /api/subscriptions/{id}", s.auth(s.saveSubscription))
 	mux.HandleFunc("DELETE /api/subscriptions/{id}", s.auth(s.deleteSubscription))
 	mux.HandleFunc("POST /api/subscriptions/{id}/sync", s.auth(s.syncSubscription))
+	mux.HandleFunc("POST /api/subscriptions/{id}/clear", s.auth(s.clearSubscription))
 	mux.HandleFunc("PUT /api/channels/{id}", s.auth(s.saveChannel))
 	mux.HandleFunc("DELETE /api/channels/{id}", s.auth(s.deleteChannel))
 	mux.HandleFunc("POST /api/channels/{id}/refresh", s.auth(s.refresh))
@@ -353,7 +355,7 @@ func (s *server) state(w http.ResponseWriter, r *http.Request) {
 	}
 	subs, err := s.repo.Subscriptions(r.Context())
 	if err != nil {
-		fail(w, 500, "无法读取 M3U 订阅")
+		fail(w, 500, "无法读取自定义订阅")
 		return
 	}
 	c, _ := r.Cookie(sessionCookie)
@@ -419,6 +421,21 @@ func (s *server) deleteSubscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	respond(w, 200, map[string]bool{"ok": true})
+}
+func (s *server) clearSubscription(w http.ResponseWriter, r *http.Request) {
+	ids, err := s.repo.ClearSubscription(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			fail(w, 404, "订阅不存在")
+		} else {
+			fail(w, 500, "清理频道失败，频道已保留")
+		}
+		return
+	}
+	for _, id := range ids {
+		s.media.Invalidate(id)
+	}
+	respond(w, 200, map[string]int{"deleted": len(ids)})
 }
 func (s *server) syncSubscription(w http.ResponseWriter, r *http.Request) {
 	if s.opts.SyncSubscription == nil {
