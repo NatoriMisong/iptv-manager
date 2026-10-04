@@ -213,44 +213,147 @@ func (s *Store) SaveChannel(ctx context.Context, ch core.Channel) (core.Channel,
 			return ch, err
 		}
 	} else {
-		current, err := scanChannel(tx.QueryRowContext(ctx, `SELECT `+channelFields+` FROM channels WHERE id=?`, ch.ID))
+		ch, err = updateChannel(ctx, tx, settings, ch)
 		if err != nil {
 			return ch, err
-		}
-		ch.SubscriptionID, ch.SourceKey, ch.SourceMissing = current.SubscriptionID, current.SourceKey, current.SourceMissing
-		if current.SubscriptionID != "" {
-			ch.Name, ch.URL, ch.Group, ch.Logo, ch.SourceType = current.Name, current.URL, current.Group, current.Logo, current.SourceType
-		}
-		if current.IsBuiltin() || current.SubscriptionID != "" {
-			ch.SourceType, ch.URL = current.SourceType, current.URL
-			ch.ProviderID, ch.ProviderChannelID = current.ProviderID, current.ProviderChannelID
-		}
-		ch, err = normalizeChannel(ch)
-		if err != nil {
-			return ch, err
-		}
-		if err := checkProxyRef(settings, ch.Proxy); err != nil {
-			return ch, err
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT sort_order FROM channels WHERE id=?`, ch.ID).Scan(&ch.SortOrder); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ch, ErrNotFound
-			}
-			return ch, err
-		}
-		result, err := tx.ExecContext(ctx, `UPDATE channels SET name=?,url=?,group_name=?,logo=?,enabled=?,mode=?,quality=?,proxy=?,source_type=?,provider_id=?,provider_channel_id=? WHERE id=?`, ch.Name, ch.URL, ch.Group, ch.Logo, ch.Enabled, ch.Mode, ch.Quality, ch.Proxy, ch.SourceType, ch.ProviderID, ch.ProviderChannelID, ch.ID)
-		if err != nil {
-			return ch, err
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return ch, err
-		}
-		if rows == 0 {
-			return ch, ErrNotFound
 		}
 	}
 	return ch, tx.Commit()
+}
+
+// updateChannel applies a single-channel edit inside tx: source fields owned by
+// a subscription or provider are preserved, then the result is validated.
+func updateChannel(ctx context.Context, tx *sql.Tx, settings core.Settings, ch core.Channel) (core.Channel, error) {
+	current, err := scanChannel(tx.QueryRowContext(ctx, `SELECT `+channelFields+` FROM channels WHERE id=?`, ch.ID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ch, ErrNotFound
+		}
+		return ch, err
+	}
+	ch.SubscriptionID, ch.SourceKey, ch.SourceMissing, ch.SortOrder = current.SubscriptionID, current.SourceKey, current.SourceMissing, current.SortOrder
+	if current.SubscriptionID != "" {
+		ch.Name, ch.URL, ch.Group, ch.Logo, ch.SourceType = current.Name, current.URL, current.Group, current.Logo, current.SourceType
+	}
+	if current.IsBuiltin() || current.SubscriptionID != "" {
+		ch.SourceType, ch.URL = current.SourceType, current.URL
+		ch.ProviderID, ch.ProviderChannelID = current.ProviderID, current.ProviderChannelID
+	}
+	ch, err = normalizeChannel(ch)
+	if err != nil {
+		return ch, err
+	}
+	if err := checkProxyRef(settings, ch.Proxy); err != nil {
+		return ch, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE channels SET name=?,url=?,group_name=?,logo=?,enabled=?,mode=?,quality=?,proxy=?,source_type=?,provider_id=?,provider_channel_id=? WHERE id=?`, ch.Name, ch.URL, ch.Group, ch.Logo, ch.Enabled, ch.Mode, ch.Quality, ch.Proxy, ch.SourceType, ch.ProviderID, ch.ProviderChannelID, ch.ID)
+	if err != nil {
+		return ch, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return ch, err
+	}
+	if rows == 0 {
+		return ch, ErrNotFound
+	}
+	return ch, nil
+}
+
+// channelIDs validates a batch of IDs: non-empty, unique, well-formed and
+// within the project-wide channel limit.
+func channelIDs(ids []string) error {
+	if len(ids) == 0 {
+		return invalid("请先选择频道")
+	}
+	if len(ids) > 1000 {
+		return invalid("一次最多处理 1000 个频道")
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if !channelIDPattern.MatchString(id) || seen[id] {
+			return invalid("频道选择包含无效或重复的 ID")
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
+// UpdateChannels applies the same edit to every listed channel atomically.
+// Any missing channel or invalid value aborts the whole batch.
+func (s *Store) UpdateChannels(ctx context.Context, req core.BulkChannelUpdate) error {
+	if err := channelIDs(req.IDs); err != nil {
+		return err
+	}
+	if req.Group == nil && req.Mode == nil && req.Quality == nil && req.Proxy == nil && req.Enabled == nil {
+		return invalid("请至少选择一项要修改的内容")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	settings, err := readSettings(ctx, tx)
+	if err != nil {
+		return err
+	}
+	for _, id := range req.IDs {
+		ch, err := scanChannel(tx.QueryRowContext(ctx, `SELECT `+channelFields+` FROM channels WHERE id=?`, id))
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if req.Group != nil {
+			ch.Group = *req.Group
+		}
+		if req.Mode != nil {
+			ch.Mode = *req.Mode
+		}
+		if req.Quality != nil {
+			ch.Quality = *req.Quality
+		}
+		if req.Proxy != nil {
+			ch.Proxy = *req.Proxy
+		}
+		if req.Enabled != nil {
+			ch.Enabled = *req.Enabled
+		}
+		if _, err := updateChannel(ctx, tx, settings, ch); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteChannels removes the listed channels atomically. Subscription channels
+// are refused because the next sync would recreate them; disable them instead.
+func (s *Store) DeleteChannels(ctx context.Context, ids []string) error {
+	if err := channelIDs(ids); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		var subscription string
+		if err := tx.QueryRowContext(ctx, `SELECT subscription_id FROM channels WHERE id=?`, id).Scan(&subscription); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if subscription != "" {
+			return invalid("订阅频道随 M3U 订阅同步，不能单独删除；可以停用频道或删除整个订阅")
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) DeleteChannel(ctx context.Context, id string) error {

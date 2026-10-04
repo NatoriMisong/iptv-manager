@@ -45,6 +45,8 @@ type Repository interface {
 	Subscriptions(context.Context) ([]core.Subscription, error)
 	SaveSubscription(context.Context, core.Subscription) (core.Subscription, error)
 	DeleteSubscription(context.Context, string) error
+	UpdateChannels(context.Context, core.BulkChannelUpdate) error
+	DeleteChannels(context.Context, []string) error
 	SaveProxy(context.Context, core.Proxy) (core.Proxy, error)
 	DeleteProxy(context.Context, string) error
 	SetProviderProxy(context.Context, string, string) error
@@ -105,6 +107,8 @@ func New(repo Repository, media Media, opts Options) (http.Handler, error) {
 	mux.HandleFunc("GET /api/builtin-sources", s.auth(s.builtinSources))
 	mux.HandleFunc("POST /api/channels", s.auth(s.saveChannel))
 	mux.HandleFunc("POST /api/channels/bulk", s.auth(s.addChannels))
+	mux.HandleFunc("POST /api/channels/bulk-update", s.auth(s.updateChannels))
+	mux.HandleFunc("POST /api/channels/bulk-delete", s.auth(s.deleteChannels))
 	mux.HandleFunc("POST /api/subscriptions", s.auth(s.saveSubscription))
 	mux.HandleFunc("PUT /api/subscriptions/{id}", s.auth(s.saveSubscription))
 	mux.HandleFunc("DELETE /api/subscriptions/{id}", s.auth(s.deleteSubscription))
@@ -447,6 +451,49 @@ func (s *server) addChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, result)
+}
+
+func batchError(w http.ResponseWriter, err error, fallback string) {
+	switch {
+	case errors.Is(err, store.ErrValidation):
+		fail(w, 400, strings.TrimPrefix(err.Error(), store.ErrValidation.Error()+": "))
+	case errors.Is(err, store.ErrNotFound):
+		fail(w, 404, "部分频道已不存在，请刷新列表后重试")
+	default:
+		fail(w, 500, fallback)
+	}
+}
+
+func (s *server) updateChannels(w http.ResponseWriter, r *http.Request) {
+	var req core.BulkChannelUpdate
+	if !decode(w, r, &req) {
+		return
+	}
+	if err := s.repo.UpdateChannels(r.Context(), req); err != nil {
+		batchError(w, err, "批量修改失败，本次未写入，请稍后重试")
+		return
+	}
+	for _, id := range req.IDs {
+		s.media.Invalidate(id)
+	}
+	respond(w, 200, map[string]int{"updated": len(req.IDs)})
+}
+
+func (s *server) deleteChannels(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if err := s.repo.DeleteChannels(r.Context(), req.IDs); err != nil {
+		batchError(w, err, "批量删除失败，本次未写入，请稍后重试")
+		return
+	}
+	for _, id := range req.IDs {
+		s.media.Invalidate(id)
+	}
+	respond(w, 200, map[string]int{"deleted": len(req.IDs)})
 }
 
 func (s *server) deleteChannel(w http.ResponseWriter, r *http.Request) {

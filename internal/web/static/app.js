@@ -8,6 +8,8 @@ let busy = false;
 let bulkSubmitting = false;
 let builtinSubmitting = false;
 let builtinSources = [];
+let bulkEditSubmitting = false;
+const selected = new Set();
 function toast(message, failed = false) {
   const el = $('#toast');
   el.textContent = message;
@@ -89,8 +91,22 @@ function renderChannels() {
   const channels = state.channels || [];
   $('#empty-state').hidden = channels.length !== 0;
   $('.table-wrap').hidden = channels.length === 0;
+  const ids = new Set(channels.map(ch => ch.id));
+  [...selected].filter(id => !ids.has(id)).forEach(id => selected.delete(id));
   channels.forEach((ch, index) => {
     const row = node('tr');
+    row.classList.toggle('selected', selected.has(ch.id));
+    const select = node('td', 'select-col');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = selected.has(ch.id);
+    checkbox.setAttribute('aria-label', `选择 ${ch.name}`);
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) selected.add(ch.id); else selected.delete(ch.id);
+      row.classList.toggle('selected', checkbox.checked);
+      renderSelection();
+    });
+    select.append(checkbox);
     const ordering = node('td');
     const orderButtons = node('div', 'order-buttons');
     const up = action('↑', `上移 ${ch.name}`, () => reorder(index, -1));
@@ -158,10 +174,107 @@ function renderChannels() {
       toast('频道已删除');
     }, 'quiet danger'));
     actions.append(buttons);
-    row.append(ordering, channel, mode, quality, source, enabled, actions);
+    row.append(select, ordering, channel, mode, quality, source, enabled, actions);
     container.append(row);
   });
+  renderSelection();
 }
+function selectedChannels() {
+  return (state?.channels || []).filter(ch => selected.has(ch.id));
+}
+function renderSelection() {
+  const channels = state?.channels || [];
+  const chosen = selectedChannels();
+  const all = $('#select-all');
+  all.checked = channels.length > 0 && chosen.length === channels.length;
+  all.indeterminate = chosen.length > 0 && chosen.length < channels.length;
+  $('#selection-bar').hidden = chosen.length === 0;
+  const managed = chosen.filter(ch => ch.subscription_id).length;
+  $('#selection-count').textContent = managed ? `已选择 ${chosen.length} 个频道（含 ${managed} 个订阅频道）` : `已选择 ${chosen.length} 个频道`;
+  $('#selection-delete').disabled = chosen.length === managed;
+  $('#selection-delete').title = chosen.length === managed ? '订阅频道随 M3U 订阅同步，不能单独删除' : '';
+}
+async function bulkUpdate(body, message) {
+  const ids = [...selected];
+  await api('/channels/bulk-update', { method: 'POST', body: { ids, ...body } });
+  await loadState({ background: true });
+  toast(message);
+}
+$('#select-all').addEventListener('change', event => {
+  (state?.channels || []).forEach(ch => { if (event.target.checked) selected.add(ch.id); else selected.delete(ch.id); });
+  renderChannels();
+});
+$('#selection-clear').addEventListener('click', () => { selected.clear(); renderChannels(); });
+$('#selection-enable').addEventListener('click', () => perform(() => bulkUpdate({ enabled: true }, `已启用 ${selected.size} 个频道`)));
+$('#selection-disable').addEventListener('click', () => perform(() => bulkUpdate({ enabled: false }, `已停用 ${selected.size} 个频道`)));
+$('#selection-delete').addEventListener('click', () => perform(async () => {
+  const chosen = selectedChannels();
+  const deletable = chosen.filter(ch => !ch.subscription_id);
+  if (!deletable.length) return;
+  const skipped = chosen.length - deletable.length;
+  const note = skipped ? `\n其中 ${skipped} 个订阅频道不会删除，如需移除请停用或删除对应订阅。` : '';
+  if (!confirm(`删除 ${deletable.length} 个频道？这些频道的固定播放地址将失效。${note}`)) return;
+  await api('/channels/bulk-delete', { method: 'POST', body: { ids: deletable.map(ch => ch.id) } });
+  deletable.forEach(ch => selected.delete(ch.id));
+  await loadState({ background: true });
+  toast(`已删除 ${deletable.length} 个频道`);
+}));
+$('#selection-edit').addEventListener('click', () => {
+  const chosen = selectedChannels();
+  if (!chosen.length) return;
+  const form = $('#bulk-edit-form');
+  form.reset();
+  fillProxySelect($('#bulk-edit-proxy'), 'direct');
+  const keep = node('option', '', '不修改');
+  keep.value = '';
+  $('#bulk-edit-proxy').prepend(keep);
+  $('#bulk-edit-proxy').value = '';
+  $('#bulk-edit-group').disabled = true;
+  $('#bulk-edit-error').textContent = '';
+  const youtube = chosen.filter(ch => ch.source_type === 'youtube').length;
+  $('#bulk-edit-summary').textContent = `将修改 ${chosen.length} 个频道${youtube ? `，其中 ${youtube} 个 YouTube 频道` : ''}。未改动的项目保持各频道原有设置。`;
+  $('#bulk-edit-dialog').showModal();
+});
+$('#bulk-edit-group-on').addEventListener('change', event => {
+  $('#bulk-edit-group').disabled = !event.target.checked;
+  if (event.target.checked) $('#bulk-edit-group').focus();
+});
+$('#bulk-edit-dialog').addEventListener('cancel', event => { if (bulkEditSubmitting) event.preventDefault(); });
+$('#bulk-edit-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (bulkEditSubmitting || busy) return;
+  const form = event.currentTarget;
+  const body = {};
+  if ($('#bulk-edit-mode').value) body.mode = $('#bulk-edit-mode').value;
+  if ($('#bulk-edit-enabled').value) body.enabled = $('#bulk-edit-enabled').value === 'true';
+  if ($('#bulk-edit-proxy').value) body.proxy = $('#bulk-edit-proxy').value;
+  if ($('#bulk-edit-quality').value) body.quality = Number($('#bulk-edit-quality').value);
+  if ($('#bulk-edit-group-on').checked) body.group = $('#bulk-edit-group').value.trim();
+  if (!Object.keys(body).length) {
+    $('#bulk-edit-error').textContent = '请至少选择一项要修改的内容';
+    return;
+  }
+  const controls = $$('input, select, button', form);
+  bulkEditSubmitting = true;
+  busy = true;
+  controls.forEach(control => { control.disabled = true; });
+  $('#bulk-edit-submit').textContent = '正在修改…';
+  $('#bulk-edit-error').textContent = '';
+  try {
+    const count = selected.size;
+    await api('/channels/bulk-update', { method: 'POST', body: { ids: [...selected], ...body } });
+    $('#bulk-edit-dialog').close();
+    await loadState({ background: true });
+    toast(`已修改 ${count} 个频道`);
+  } catch (error) { $('#bulk-edit-error').textContent = error.message; }
+  finally {
+    controls.forEach(control => { control.disabled = false; });
+    $('#bulk-edit-group').disabled = !$('#bulk-edit-group-on').checked;
+    $('#bulk-edit-submit').textContent = '应用到所选频道';
+    bulkEditSubmitting = false;
+    busy = false;
+  }
+});
 async function reorder(index, step) {
   const ids = state.channels.map(c => c.id);
   [ids[index], ids[index + step]] = [ids[index + step], ids[index]];

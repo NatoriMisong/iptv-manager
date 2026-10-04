@@ -43,6 +43,19 @@ type BulkChannelRequest struct {
 	Proxy      string   `json:"proxy,omitempty"`
 }
 
+// BulkChannelUpdate edits the user-managed fields of several channels in one
+// transaction. Nil fields stay unchanged. Subscription channels keep the group
+// synced from their list and built-in channels keep the provider proxy, exactly
+// as when editing a single channel.
+type BulkChannelUpdate struct {
+	IDs     []string `json:"ids"`
+	Group   *string  `json:"group,omitempty"`
+	Mode    *string  `json:"mode,omitempty"`
+	Quality *int     `json:"quality,omitempty"`
+	Proxy   *string  `json:"proxy,omitempty"`
+	Enabled *bool    `json:"enabled,omitempty"`
+}
+
 type Subscription struct {
 	ID              string    `json:"id"`
 	Name            string    `json:"name"`

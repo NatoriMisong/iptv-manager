@@ -85,3 +85,78 @@ func TestBulkDatabaseErrorDoesNotLeakDetails(t *testing.T) {
 		t.Fatalf("unsafe database error: %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestBatchEditAndDeleteAPI(t *testing.T) {
+	ctx := context.Background()
+	repo, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	hash, err := bcrypt.GenerateFromPassword([]byte("a-strong-password"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetAdminHash(ctx, string(hash)); err != nil {
+		t.Fatal(err)
+	}
+	media := &fakeMedia{}
+	h, err := New(repo, media, Options{SecureCookies: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie, csrf := loginAsAdmin(t, h)
+	channels, _ := repo.Channels(ctx)
+	if len(channels) < 2 {
+		t.Fatalf("expected seeded channels, got %d", len(channels))
+	}
+	ids := `["` + channels[0].ID + `","` + channels[1].ID + `"]`
+	for _, tc := range []struct{ csrf, origin string }{{"", "https://tv.example"}, {csrf, "https://evil.example"}} {
+		for _, path := range []string{"/api/channels/bulk-update", "/api/channels/bulk-delete"} {
+			if w := request(h, "POST", path, `{"ids":`+ids+`,"enabled":false}`, cookie, tc.csrf, tc.origin); w.Code != 403 {
+				t.Fatalf("unprotected %s: %d", path, w.Code)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		body string
+		code int
+	}{
+		{`{"ids":` + ids + `,"name":"x"}`, 400},
+		{`{"ids":` + ids + `}`, 400},
+		{`{"ids":[],"enabled":false}`, 400},
+		{`{"ids":["` + channels[0].ID + `","missing00000"],"enabled":false}`, 404},
+		{`{"ids":` + ids + `,"mode":"auto"}`, 400},
+	} {
+		if w := request(h, "POST", "/api/channels/bulk-update", tc.body, cookie, csrf, "https://tv.example"); w.Code != tc.code {
+			t.Fatalf("bulk-update %s: %d %s", tc.body, w.Code, w.Body.String())
+		}
+	}
+	if len(media.invalidated) != 0 {
+		t.Fatal("rejected batch invalidated streams")
+	}
+	w := request(h, "POST", "/api/channels/bulk-update", `{"ids":`+ids+`,"enabled":false,"mode":"direct","group":"合并"}`, cookie, csrf, "https://tv.example")
+	if w.Code != 200 {
+		t.Fatalf("bulk-update: %d %s", w.Code, w.Body.String())
+	}
+	for _, id := range []string{channels[0].ID, channels[1].ID} {
+		ch, err := repo.Channel(ctx, id)
+		if err != nil || ch.Enabled || ch.Mode != "direct" || ch.Group != "合并" {
+			t.Fatalf("not updated: %+v %v", ch, err)
+		}
+	}
+	if len(media.invalidated) != 2 {
+		t.Fatalf("invalidated %v", media.invalidated)
+	}
+	if w := request(h, "POST", "/api/channels/bulk-delete", `{"ids":["`+channels[0].ID+`"],"extra":1}`, cookie, csrf, "https://tv.example"); w.Code != 400 {
+		t.Fatalf("strict json: %d", w.Code)
+	}
+	w = request(h, "POST", "/api/channels/bulk-delete", `{"ids":`+ids+`}`, cookie, csrf, "https://tv.example")
+	if w.Code != 200 {
+		t.Fatalf("bulk-delete: %d %s", w.Code, w.Body.String())
+	}
+	remaining, _ := repo.Channels(ctx)
+	if len(remaining) != len(channels)-2 || len(media.invalidated) != 4 {
+		t.Fatalf("remaining %d invalidated %v", len(remaining), media.invalidated)
+	}
+}

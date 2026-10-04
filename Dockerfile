@@ -3,7 +3,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG VERSION=0.4.1
+ARG VERSION=0.5.0
 RUN CGO_ENABLED=0 GOMAXPROCS=1 GOMEMLIMIT=512MiB go build -p=1 -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/iptv-manager ./cmd/iptv-manager
 
 FROM node:22-bookworm-slim AS javascript

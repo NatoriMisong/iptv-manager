@@ -46,7 +46,8 @@
         </section>
         <section class="panel channels-panel" aria-labelledby="channels-title">
           <div class="panel-heading"><div><h2 id="channels-title">频道列表 <span id="table-count" class="count-pill">0</span></h2><p class="muted">支持直连或中继；网站来源统一管理，YouTube 按需解析，通用源直接连接。</p></div><button id="reload" class="quiet">↻ 刷新状态</button></div>
-          <div class="table-wrap"><table><thead><tr><th class="order-col">排序</th><th>频道</th><th>播放方式</th><th>画质上限</th><th>来源状态</th><th>启用</th><th class="actions-head">操作</th></tr></thead><tbody id="channel-rows"></tbody></table></div>
+          <div id="selection-bar" class="selection-bar" role="toolbar" aria-label="批量操作" hidden><span id="selection-count" role="status"></span><button id="selection-enable" type="button" class="quiet">启用</button><button id="selection-disable" type="button" class="quiet">停用</button><button id="selection-edit" type="button" class="outline">批量编辑</button><button id="selection-delete" type="button" class="quiet danger">删除所选</button><button id="selection-clear" type="button" class="quiet">取消选择</button></div>
+          <div class="table-wrap"><table><thead><tr><th class="select-col"><input id="select-all" type="checkbox" aria-label="全选频道"></th><th class="order-col">排序</th><th>频道</th><th>播放方式</th><th>画质上限</th><th>来源状态</th><th>启用</th><th class="actions-head">操作</th></tr></thead><tbody id="channel-rows"></tbody></table></div>
           <div id="empty-state" class="empty" hidden><span aria-hidden="true">▷</span><h3>从第一个直播频道开始</h3><p class="muted">添加直播地址、M3U 订阅或 YouTube 直播，生成自己的 IPTV 订阅。</p><button id="empty-add" class="outline">添加频道</button></div>
           <div class="table-footer"><span class="muted tiny">频道地址保持固定，调整排序不会影响播放链接。</span><button id="backup" class="quiet">导出配置</button><button id="restore" class="quiet">导入配置</button><input id="restore-file" type="file" accept="application/json,.json" hidden></div>
         </section>
@@ -93,6 +94,15 @@
     <div class="form-grid"><div id="channel-quality-field"><label for="channel-quality">YouTube 画质上限</label><select id="channel-quality" name="quality"><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div><div><label for="channel-enabled">频道状态</label><select id="channel-enabled" name="enabled"><option value="true">启用</option><option value="false">停用</option></select></div></div>
     <details><summary>更多选项</summary><label for="channel-logo">频道图标地址</label><input id="channel-logo" name="logo" type="url" placeholder="https://example.com/logo.png"><div id="channel-proxy-field"><label for="channel-proxy">出站代理</label><select id="channel-proxy" name="proxy"></select><p class="field-help">服务器解析来源、获取清单和中继分片时使用。代理在“代理设置”页面添加；客户端直连时不经过服务器代理。</p></div></details>
     <p id="channel-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button type="submit" class="primary">保存频道</button></div>
+  </form></dialog>
+  <dialog id="bulk-edit-dialog" aria-labelledby="bulk-edit-title"><form id="bulk-edit-form">
+    <div class="dialog-heading"><div><p class="eyebrow">EDIT TOGETHER</p><h2 id="bulk-edit-title">批量编辑频道</h2></div><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div>
+    <p id="bulk-edit-summary" class="muted"></p>
+    <div class="form-grid"><div><label for="bulk-edit-mode">播放方式</label><select id="bulk-edit-mode" name="mode"><option value="">不修改</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div><label for="bulk-edit-enabled">频道状态</label><select id="bulk-edit-enabled" name="enabled"><option value="">不修改</option><option value="true">启用</option><option value="false">停用</option></select></div></div>
+    <div class="form-grid"><div><label for="bulk-edit-proxy">出站代理</label><select id="bulk-edit-proxy" name="proxy"></select></div><div><label for="bulk-edit-quality">YouTube 画质上限</label><select id="bulk-edit-quality" name="quality"><option value="">不修改</option><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
+    <label class="check-label" for="bulk-edit-group-on"><input id="bulk-edit-group-on" type="checkbox"> 修改分组</label><input id="bulk-edit-group" name="group" maxlength="150" placeholder="留空表示清除分组" disabled>
+    <p class="field-help">只会修改选中的项目。M3U 订阅频道的分组随订阅同步，网站直播源频道的代理在“网站直播源”页面按来源设置，这两项对相应频道不生效；画质只影响 YouTube 频道。</p>
+    <p id="bulk-edit-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button id="bulk-edit-submit" type="submit" class="primary">应用到所选频道</button></div>
   </form></dialog>
   <dialog id="builtin-dialog" aria-labelledby="builtin-title"><form id="builtin-form">
     <div class="dialog-heading"><div><p class="eyebrow">READY TO ADD</p><h2 id="builtin-title">添加网站直播源</h2></div><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div>

@@ -59,8 +59,13 @@ func (r *memoryRepo) SaveProxy(_ context.Context, p core.Proxy) (core.Proxy, err
 func (r *memoryRepo) DeleteProxy(context.Context, string) error              { r.changes++; return nil }
 func (r *memoryRepo) SetProviderProxy(context.Context, string, string) error { r.changes++; return nil }
 func (r *memoryRepo) DeleteChannel(context.Context, string) error            { r.changes++; return nil }
-func (r *memoryRepo) Reorder(context.Context, []string) error                { r.changes++; return nil }
-func (r *memoryRepo) Settings(context.Context) (core.Settings, error)        { return r.settings, nil }
+func (r *memoryRepo) UpdateChannels(context.Context, core.BulkChannelUpdate) error {
+	r.changes++
+	return nil
+}
+func (r *memoryRepo) DeleteChannels(context.Context, []string) error  { r.changes++; return nil }
+func (r *memoryRepo) Reorder(context.Context, []string) error         { r.changes++; return nil }
+func (r *memoryRepo) Settings(context.Context) (core.Settings, error) { return r.settings, nil }
 func (r *memoryRepo) SaveSettings(_ context.Context, s core.Settings) error {
 	r.settings = s
 	r.changes++
@@ -145,7 +150,7 @@ func loginAsAdmin(t *testing.T, h http.Handler) (*http.Cookie, string) {
 
 func TestUnauthenticatedMutationsNeverReachRepository(t *testing.T) {
 	h, repo, media := setup(t)
-	for _, route := range []struct{ method, path string }{{"POST", "/api/channels"}, {"POST", "/api/channels/bulk"}, {"DELETE", "/api/channels/test-channel"}, {"PUT", "/api/settings"}, {"POST", "/api/restore"}, {"POST", "/api/token"}, {"POST", "/api/channels/test-channel/refresh"}} {
+	for _, route := range []struct{ method, path string }{{"POST", "/api/channels"}, {"POST", "/api/channels/bulk"}, {"POST", "/api/channels/bulk-update"}, {"POST", "/api/channels/bulk-delete"}, {"DELETE", "/api/channels/test-channel"}, {"PUT", "/api/settings"}, {"POST", "/api/restore"}, {"POST", "/api/token"}, {"POST", "/api/channels/test-channel/refresh"}} {
 		w := request(h, route.method, route.path, `{}`, nil, "", "")
 		if w.Code != 401 {
 			t.Errorf("%s %s: %d", route.method, route.path, w.Code)

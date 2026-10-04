@@ -18,3 +18,4 @@
 @media(max-width:540px){.proxy-grid{grid-template-columns:1fr;gap:0}
 .builtin-proxy select{width:100%}
 }
+.select-col{width:44px;padding-right:0}td.select-col{padding-right:0}.select-col input,.check-label input{width:17px;height:17px;margin:0;padding:0;accent-color:var(--accent);cursor:pointer;vertical-align:middle}tr.selected td{background:#1f2a1c}.selection-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:12px 25px;border-top:1px solid var(--line);background:#1d2420}.selection-bar>span{margin-right:auto;font-size:13px;font-weight:600;color:#d7f7b5}.selection-bar button{font-size:12px}.check-label{display:flex;align-items:center;gap:8px;cursor:pointer}#bulk-edit-group{margin-top:8px}#bulk-edit-group:disabled{opacity:.5}@media(max-width:720px){.selection-bar{padding:12px 16px}.selection-bar>span{flex-basis:100%;margin-bottom:4px}#bulk-edit-dialog .form-grid{grid-template-columns:1fr;gap:0}}
