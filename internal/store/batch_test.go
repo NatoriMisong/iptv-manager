@@ -22,15 +22,18 @@ func TestBatchUpdateAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sub, err := s.SaveSubscription(testContext, core.Subscription{Name: "列表", URL: "https://example.com/list.m3u", IntervalMinutes: 60, Enabled: true})
+	sub, err := s.SaveSubscription(testContext, core.Subscription{Name: "列表", Sources: []core.SubscriptionSource{{URL: "https://example.com/list.m3u"}}, IntervalMinutes: 60, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids, err := s.ApplySubscription(testContext, sub, source.Playlist{Entries: []source.Entry{{Key: "id:one", Name: "One", URL: "https://cdn.example/one.m3u8", Group: "订阅组"}}})
-	if err != nil || len(ids) != 1 {
-		t.Fatalf("sync: %v %v", ids, err)
+	if _, err := s.ApplySource(testContext, sub, sub.Sources[0].ID, source.Playlist{Entries: []source.Entry{{Name: "One", URL: "https://cdn.example/one.m3u8", Group: "订阅组"}}}); err != nil {
+		t.Fatal(err)
 	}
-	managed := ids[0]
+	picked, err := s.AddSubscriptionChannels(testContext, sub.ID, core.SubscriptionAddRequest{Items: []core.SubscriptionAddItem{{SourceID: sub.Sources[0].ID, Name: "One"}}})
+	if err != nil || picked.Added != 1 {
+		t.Fatalf("pick: %+v %v", picked, err)
+	}
+	managed := picked.Results[0].ChannelID
 	all := []string{stream.ID, youtube.ID, managed}
 	before, _ := s.Export(testContext)
 
@@ -50,7 +53,7 @@ func TestBatchUpdateAndDelete(t *testing.T) {
 			t.Fatalf("accepted %+v: %v", bad, err)
 		}
 	}
-	for _, bad := range [][]string{nil, {stream.ID, "missing00000"}, {stream.ID, managed}} {
+	for _, bad := range [][]string{nil, {stream.ID, "missing00000"}, {stream.ID, stream.ID}} {
 		if err := s.DeleteChannels(testContext, bad); !errors.Is(err, ErrValidation) && !errors.Is(err, ErrNotFound) {
 			t.Fatalf("delete accepted %v: %v", bad, err)
 		}
@@ -85,24 +88,25 @@ func TestBatchUpdateAndDelete(t *testing.T) {
 	if got[youtube.ID].Group != "新组" || got[youtube.ID].Quality != 480 {
 		t.Fatalf("youtube: %+v", got[youtube.ID])
 	}
-	if got[managed].Group != "订阅组" || got[managed].Name != "One" || got[managed].SubscriptionID != sub.ID || got[managed].SourceKey != "id:one" {
-		t.Fatalf("subscription fields overwritten: %+v", got[managed])
+	if got[managed].Group != "新组" || got[managed].SourceGroup != "订阅组" || got[managed].Name != "One" || got[managed].SubscriptionID != sub.ID || got[managed].SourceKey != "One" || got[managed].SourceID != sub.Sources[0].ID {
+		t.Fatalf("subscription channel fields: %+v", got[managed])
 	}
 
-	if err := s.DeleteChannels(testContext, []string{stream.ID, youtube.ID}); err != nil {
+	if err := s.DeleteChannels(testContext, []string{stream.ID, youtube.ID, managed}); err != nil {
 		t.Fatal(err)
 	}
 	remaining, _ := s.Channels(testContext)
-	if len(remaining) != len(before.Channels)-2 {
+	if len(remaining) != len(before.Channels)-3 {
 		t.Fatalf("remaining: %+v", remaining)
 	}
 	for _, ch := range remaining {
-		if ch.ID == stream.ID || ch.ID == youtube.ID {
+		if ch.ID == stream.ID || ch.ID == youtube.ID || ch.ID == managed {
 			t.Fatalf("channel not deleted: %+v", ch)
 		}
 	}
-	if _, err := s.Channel(testContext, managed); err != nil {
-		t.Fatalf("subscription channel lost: %v", err)
+	entries, err := s.SubscriptionEntries(testContext, sub.ID)
+	if err != nil || len(entries) != 1 || entries[0].Added {
+		t.Fatalf("catalogue after delete: %+v %v", entries, err)
 	}
 }
 

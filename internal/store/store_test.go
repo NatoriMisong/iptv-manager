@@ -2,9 +2,7 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -147,47 +145,6 @@ func TestStableChannelIDs(t *testing.T) {
 	}
 }
 
-func TestUnsupportedSchemaIsNotModified(t *testing.T) {
-	for _, version := range []int{1, 3, 4, 6} {
-		t.Run(fmt.Sprint(version), func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "iptv-manager.db")
-			db, err := sql.Open("sqlite", path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer db.Close()
-			for _, stmt := range []string{
-				`CREATE TABLE existing_data (value TEXT NOT NULL)`,
-				`INSERT INTO existing_data VALUES ('preserve this')`,
-				fmt.Sprintf("PRAGMA user_version = %d", version),
-			} {
-				if _, err := db.Exec(stmt); err != nil {
-					t.Fatal(err)
-				}
-			}
-			opened, err := Open(path)
-			if err == nil {
-				opened.Close()
-				t.Fatal("unsupported schema accepted")
-			}
-			if !strings.Contains(err.Error(), "unsupported database schema") {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			var actualVersion, tables int
-			var value string
-			if err := db.QueryRow("PRAGMA user_version").Scan(&actualVersion); err != nil || actualVersion != version {
-				t.Fatalf("schema version modified: %d %v", actualVersion, err)
-			}
-			if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").Scan(&tables); err != nil || tables != 1 {
-				t.Fatalf("tables modified: %d %v", tables, err)
-			}
-			if err := db.QueryRow("SELECT value FROM existing_data").Scan(&value); err != nil || value != "preserve this" {
-				t.Fatalf("data modified: %q %v", value, err)
-			}
-		})
-	}
-}
-
 func TestReorderIsAtomic(t *testing.T) {
 	s := testStore(t)
 	before, _ := s.Channels(testContext)
@@ -226,9 +183,9 @@ func TestImportIsAtomicAndExcludesAdmin(t *testing.T) {
 			case "settings":
 				backup.Settings.BaseURL = "https://tv.example.com/subpath"
 			case "older-version":
-				backup.Version = 4
+				backup.Version = 5
 			case "newer-version":
-				backup.Version = 6
+				backup.Version = 7
 			}
 			if err := s.Import(testContext, backup); !errors.Is(err, ErrValidation) {
 				t.Fatalf("import error = %v", err)

@@ -9,10 +9,13 @@ import (
 	"unicode"
 )
 
-const MaxPlaylistBytes = 2 << 20
-const MaxPlaylistChannels = 1000
+const MaxPlaylistBytes = 4 << 20
+const MaxPlaylistChannels = 5000
 
-type Entry struct{ Key, Name, URL, Group, Logo string }
+// Entry is one channel of a list. Name is the channel identity inside the
+// list: URLs change between refreshes, names do not. Duplicate names keep the
+// first occurrence.
+type Entry struct{ Name, URL, Group, Logo string }
 type Playlist struct {
 	Entries []Entry
 	Skipped int
@@ -51,14 +54,15 @@ func resolveLink(raw string, u *url.URL, base *url.URL) string {
 func ParseM3U(body []byte, base *url.URL) (Playlist, error) {
 	var result Playlist
 	if len(body) > MaxPlaylistBytes {
-		return result, errors.New("M3U 列表不能超过 2 MB")
+		return result, errors.New("M3U 列表不能超过 4 MB")
 	}
 	text := strings.TrimSpace(strings.TrimPrefix(string(body), "\uFEFF"))
 	if text != "#EXTM3U" && !strings.HasPrefix(text, "#EXTM3U\n") && !strings.HasPrefix(text, "#EXTM3U\r\n") && !strings.HasPrefix(text, "#EXTM3U ") {
 		return result, errors.New("来源没有返回有效的 M3U 频道列表")
 	}
-	seen := map[string]string{}
+	seen := map[string]bool{}
 	pending := Entry{}
+	tvgName := ""
 	scanner := bufio.NewScanner(strings.NewReader(text))
 	scanner.Buffer(make([]byte, 4096), 64<<10)
 	for scanner.Scan() {
@@ -70,7 +74,7 @@ func ParseM3U(body []byte, base *url.URL) (Playlist, error) {
 			return Playlist{}, errors.New("此地址是单个 HLS 直播，请在添加频道中选择通用直播源")
 		}
 		if strings.HasPrefix(line, "#EXTINF:") {
-			pending = Entry{}
+			pending, tvgName = Entry{}, ""
 			quoted := false
 			for i, r := range line {
 				if r == '"' {
@@ -83,12 +87,8 @@ func ParseM3U(body []byte, base *url.URL) (Playlist, error) {
 			}
 			for _, a := range attributes.FindAllStringSubmatch(line, -1) {
 				switch a[1] {
-				case "tvg-id":
-					pending.Key = cleanText(a[2], 300)
 				case "tvg-name":
-					if pending.Name == "" {
-						pending.Name = cleanText(a[2], 300)
-					}
+					tvgName = cleanText(a[2], 300)
 				case "group-title":
 					pending.Group = cleanText(a[2], 150)
 				case "tvg-logo":
@@ -106,6 +106,10 @@ func ParseM3U(body []byte, base *url.URL) (Playlist, error) {
 		}
 		entry := pending
 		pending = Entry{}
+		if entry.Name == "" {
+			entry.Name = tvgName
+		}
+		tvgName = ""
 		u, err := url.Parse(line)
 		if err != nil {
 			result.Skipped++
@@ -117,10 +121,11 @@ func ParseM3U(body []byte, base *url.URL) (Playlist, error) {
 			continue
 		}
 		entry.URL = Normalize(entry.URL)
-		if entry.Name == "" {
-			final, _ := url.Parse(entry.URL)
-			entry.Name = cleanText(final.Hostname()+final.Path, 300)
+		if entry.Name == "" || seen[entry.Name] {
+			result.Skipped++
+			continue
 		}
+		seen[entry.Name] = true
 		if entry.Logo != "" {
 			logo, err := url.Parse(entry.Logo)
 			if err != nil {
@@ -132,22 +137,9 @@ func ParseM3U(body []byte, base *url.URL) (Playlist, error) {
 				}
 			}
 		}
-		if entry.Key != "" {
-			entry.Key = "id:" + entry.Key
-		} else {
-			entry.Key = "url:" + entry.URL
-		}
-		if previous, ok := seen[entry.Key]; ok {
-			if previous != entry.URL {
-				return Playlist{}, errors.New("M3U 中存在重复 tvg-id 且地址不同，无法确定频道身份")
-			}
-			result.Skipped++
-			continue
-		}
-		seen[entry.Key] = entry.URL
 		result.Entries = append(result.Entries, entry)
 		if len(result.Entries) > MaxPlaylistChannels {
-			return Playlist{}, errors.New("M3U 列表最多支持 1000 个频道")
+			return Playlist{}, errors.New("M3U 列表最多支持 5000 个频道")
 		}
 	}
 	if scanner.Err() != nil {

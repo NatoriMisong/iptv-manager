@@ -131,7 +131,8 @@ function renderChannels() {
     const name = node('div', 'channel-name', ch.name);
     name.title = ch.name;
     const sourceName = ch.subscription_id ? `订阅 · ${state.subscriptions?.find(s => s.id === ch.subscription_id)?.name || '订阅'}` : ch.source_type === 'builtin' ? (builtinSources.find(source => source.id === ch.provider_id)?.name || '网站直播') : ch.source_type === 'stream' ? '通用直播' : 'YouTube';
-    identity.append(name, node('div', 'channel-meta', `${ch.group || '未分组'} · ${sourceName}`));
+    const meta = `${ch.group || '未分组'} · ${sourceName}`;
+    identity.append(name, node('div', 'channel-meta', ch.source_group && ch.source_group !== ch.group ? `${meta} · 列表分组：${ch.source_group}` : meta));
     cell.append(logo, identity);
     channel.append(cell);
     const mode = node('td');
@@ -167,8 +168,8 @@ function renderChannels() {
       await loadState({ background: true });
       toast(result.message);
     }));
-    if (!ch.subscription_id) buttons.append(action('删除', `删除 ${ch.name}`, async () => {
-      if (!confirm(`删除频道「${ch.name}」？此频道的固定播放地址将失效。`)) return;
+    buttons.append(action('删除', `删除 ${ch.name}`, async () => {
+      if (!confirm(ch.subscription_id ? `删除频道「${ch.name}」？此频道的固定播放地址将失效，之后仍可从订阅目录重新添加。` : `删除频道「${ch.name}」？此频道的固定播放地址将失效。`)) return;
       await api(`/channels/${encodeURIComponent(ch.id)}`, { method: 'DELETE' });
       await loadState({ background: true });
       toast('频道已删除');
@@ -189,10 +190,7 @@ function renderSelection() {
   all.checked = channels.length > 0 && chosen.length === channels.length;
   all.indeterminate = chosen.length > 0 && chosen.length < channels.length;
   $('#selection-bar').hidden = chosen.length === 0;
-  const managed = chosen.filter(ch => ch.subscription_id).length;
-  $('#selection-count').textContent = managed ? `已选择 ${chosen.length} 个频道（含 ${managed} 个订阅频道）` : `已选择 ${chosen.length} 个频道`;
-  $('#selection-delete').disabled = chosen.length === managed;
-  $('#selection-delete').title = chosen.length === managed ? '订阅频道随自定义订阅同步，不能单独删除' : '';
+  $('#selection-count').textContent = `已选择 ${chosen.length} 个频道`;
 }
 async function bulkUpdate(body, message) {
   const ids = [...selected];
@@ -209,15 +207,14 @@ $('#selection-enable').addEventListener('click', () => perform(() => bulkUpdate(
 $('#selection-disable').addEventListener('click', () => perform(() => bulkUpdate({ enabled: false }, `已停用 ${selected.size} 个频道`)));
 $('#selection-delete').addEventListener('click', () => perform(async () => {
   const chosen = selectedChannels();
-  const deletable = chosen.filter(ch => !ch.subscription_id);
-  if (!deletable.length) return;
-  const skipped = chosen.length - deletable.length;
-  const note = skipped ? `\n其中 ${skipped} 个订阅频道不会删除，如需移除请停用或删除对应订阅。` : '';
-  if (!confirm(`删除 ${deletable.length} 个频道？这些频道的固定播放地址将失效。${note}`)) return;
-  await api('/channels/bulk-delete', { method: 'POST', body: { ids: deletable.map(ch => ch.id) } });
-  deletable.forEach(ch => selected.delete(ch.id));
+  if (!chosen.length) return;
+  const managed = chosen.filter(ch => ch.subscription_id).length;
+  const note = managed ? `\n其中 ${managed} 个订阅频道之后仍可从订阅目录重新添加。` : '';
+  if (!confirm(`删除 ${chosen.length} 个频道？这些频道的固定播放地址将失效。${note}`)) return;
+  await api('/channels/bulk-delete', { method: 'POST', body: { ids: chosen.map(ch => ch.id) } });
+  selected.clear();
   await loadState({ background: true });
-  toast(`已删除 ${deletable.length} 个频道`);
+  toast(`已删除 ${chosen.length} 个频道`);
 }));
 $('#selection-edit').addEventListener('click', () => {
   const chosen = selectedChannels();
@@ -293,7 +290,9 @@ function editChannel(channel) {
   const builtin = channel?.source_type === 'builtin';
   $('#channel-proxy-field').hidden = builtin;
   $('#channel-proxy-note').hidden = !builtin;
-  ['name', 'url', 'group', 'logo'].forEach(key => { form.elements.namedItem(key).readOnly = managed; });
+  ['name', 'url', 'logo'].forEach(key => { form.elements.namedItem(key).readOnly = managed; });
+  $('#channel-source-group').hidden = !managed;
+  $('#channel-source-group').textContent = managed ? `列表中的分组：${channel.source_group || '未分组'}` : '';
   $('#channel-url').readOnly = managed || builtin;
   $('#channel-type').disabled = managed || builtin;
   $('#channel-type').hidden = builtin;
@@ -430,8 +429,9 @@ $('#builtin-form').addEventListener('submit', async event => {
 function editSubscription(sub) {
   const form = $('#subscription-form');
   form.reset();
-  const data = sub || { id: '', name: '', url: '', proxy: 'direct', interval_minutes: 60, enabled: true };
+  const data = sub || { id: '', name: '', proxy: 'direct', interval_minutes: 60, enabled: true };
   Object.entries(data).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
+  form.elements.namedItem('urls').value = (sub?.sources || []).map(src => src.url).join('\n');
   fillProxySelect($('#subscription-proxy'), data.proxy);
   $('#subscription-error').textContent = '';
   $('#subscription-dialog-title').textContent = sub ? '编辑自定义订阅' : '添加自定义订阅';
@@ -446,19 +446,33 @@ function renderSubscriptions() {
   subs.forEach(sub => {
     const card = node('article', 'panel settings-card');
     const channels = state.channels.filter(ch => ch.subscription_id === sub.id);
+    const entries = (sub.sources || []).reduce((sum, src) => sum + (src.entries || 0), 0);
     card.append(node('h2', '', sub.name));
-    card.append(node('p', 'muted', `${new URL(sub.url).host} · ${channels.filter(ch => !ch.source_missing).length} 个来源有效 · ${channels.filter(ch => ch.source_missing).length} 个失效`));
-    card.append(node('p', 'field-help', `${sub.enabled ? `每 ${sub.interval_minutes} 分钟自动更新` : '自动更新已暂停'} · 最近成功：${time(sub.last_sync)}`));
+    card.append(node('p', 'muted', `目录 ${entries} 个频道 · 已添加 ${channels.filter(ch => !ch.source_missing).length} 个 · ${channels.filter(ch => ch.source_missing).length} 个失效`));
+    card.append(node('p', 'field-help', `${sub.enabled ? `每 ${sub.interval_minutes} 分钟自动更新` : '自动更新已暂停'} · 最近全部成功：${time(sub.last_sync)}`));
     if (sub.last_error) card.append(node('p', 'error', `同步失败：${sub.last_error}`));
-    if (sub.skipped) card.append(node('p', 'field-help', `最近一次同步跳过 ${sub.skipped} 个重复、不支持或无效的条目`));
+    const sources = node('ul', 'subscription-sources');
+    (sub.sources || []).forEach(src => {
+      const item = node('li');
+      const address = node('code', '', src.url);
+      address.title = src.url;
+      item.append(address, node('span', '', `${src.entries || 0} 个频道`), node('span', '', `同步：${time(src.last_sync)}`));
+      if (src.skipped) item.append(node('span', '', `跳过 ${src.skipped} 条`));
+      if (src.last_error) item.append(node('span', 'error', src.last_error));
+      sources.append(item);
+    });
+    card.append(sources);
     const buttons = node('div', 'subscription-buttons');
     buttons.append(action('编辑订阅', `编辑订阅 ${sub.name}`, () => editSubscription(sub)), action('立即同步', `立即同步 ${sub.name}`, async () => {
       buttons.querySelectorAll('button').forEach(b => { b.disabled = true; });
-      try { await api(`/subscriptions/${encodeURIComponent(sub.id)}/sync`, { method: 'POST' }); toast('订阅同步完成'); }
+      try { await api(`/subscriptions/${encodeURIComponent(sub.id)}/sync`, { method: 'POST' }); toast('目录已更新'); }
       finally { await loadState({ background: true }); buttons.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
     }));
-    const clear = action('清理频道', `清理订阅 ${sub.name} 导入的频道`, async () => {
-      if (!confirm(`从频道列表移除订阅「${sub.name}」导入的 ${channels.length} 个频道？订阅本身保留，下次同步会按列表重新导入，这些频道的播放地址将失效并重新生成。`)) return;
+    const add = action('添加频道', `从 ${sub.name} 的目录添加频道`, () => openSubscriptionAdd(sub), 'outline');
+    add.disabled = entries === 0;
+    buttons.append(add);
+    const clear = action('清理频道', `清理订阅 ${sub.name} 添加的频道`, async () => {
+      if (!confirm(`从频道列表移除订阅「${sub.name}」的 ${channels.length} 个频道？订阅和目录保留，可以随时重新添加，但这些频道的播放地址会失效。`)) return;
       const result = await api(`/subscriptions/${encodeURIComponent(sub.id)}/clear`, { method: 'POST' });
       await loadState({ background: true }); toast(`已移除 ${result.deleted} 个频道，订阅已保留`);
     }, 'quiet danger');
@@ -471,6 +485,181 @@ function renderSubscriptions() {
     card.append(buttons); list.append(card);
   });
 }
+let subAdd = { sub: null, entries: [], selected: new Set(), submitting: false };
+function siteDomain(host) {
+  host = String(host || '').toLowerCase().replace(/\.$/, '').replace(/^\[(.*)\]$/, '$1');
+  if (!host || /^[\d.]+$/.test(host) || host.includes(':')) return host;
+  const labels = host.split('.');
+  if (labels.length <= 2) return host;
+  const second = labels[labels.length - 2];
+  const n = labels[labels.length - 1].length === 2 && ['com', 'net', 'org', 'edu', 'gov', 'mil', 'co', 'ac', 'or', 'ne', 'go', 'idv'].includes(second) ? 3 : 2;
+  return labels.slice(-n).join('.');
+}
+function domainOf(url) {
+  try { return siteDomain(new URL(url).hostname); } catch { return ''; }
+}
+async function openSubscriptionAdd(sub) {
+  const result = await api(`/subscriptions/${encodeURIComponent(sub.id)}/entries`);
+  subAdd = { sub, entries: result.entries || [], selected: new Set(), submitting: false };
+  const form = $('#sub-add-form');
+  form.reset();
+  $('#sub-add-error').textContent = '';
+  $('#sub-add-result').hidden = true;
+  $('#sub-add-title').textContent = `从「${sub.name}」添加频道`;
+  const sourceSelect = $('#sub-add-source');
+  const all = node('option', '', '全部列表');
+  all.value = '';
+  sourceSelect.replaceChildren(all, ...(sub.sources || []).map(src => {
+    const option = node('option', '', `${new URL(src.url).host} · ${src.entries || 0} 个`);
+    option.value = src.id;
+    return option;
+  }));
+  const domains = [...new Set(subAdd.entries.map(e => domainOf(e.url)).filter(Boolean))].sort();
+  const anyDomain = node('option', '', '全部域名');
+  anyDomain.value = '';
+  $('#sub-add-domain-filter').replaceChildren(anyDomain, ...domains.map(domain => {
+    const option = node('option', '', `${domain} · ${subAdd.entries.filter(e => domainOf(e.url) === domain).length} 个`);
+    option.value = domain;
+    return option;
+  }));
+  const groups = [...new Set(subAdd.entries.map(e => e.group || ''))].sort((a, b) => a.localeCompare(b, 'zh'));
+  const anyGroup = node('option', '', '全部分组');
+  anyGroup.value = '';
+  $('#sub-add-group-filter').replaceChildren(anyGroup, ...groups.map(group => {
+    const option = node('option', '', group || '未分组');
+    option.value = group || '\u0000';
+    return option;
+  }));
+  renderSubAddOrigins();
+  renderSubAddList();
+  $('#sub-add-dialog').showModal();
+  $('#sub-add-search').focus();
+}
+function subAddVisible() {
+  const sourceId = $('#sub-add-source').value;
+  const group = $('#sub-add-group-filter').value;
+  const domain = $('#sub-add-domain-filter').value;
+  const query = $('#sub-add-search').value.trim().toLowerCase();
+  return subAdd.entries.filter(e => (!sourceId || e.source_id === sourceId) && (!domain || domainOf(e.url) === domain) && (!group || (e.group || '\u0000') === group) && (!query || e.name.toLowerCase().includes(query)));
+}
+const subAddKey = e => `${e.source_id}\u0000${e.name}`;
+function renderSubAddList() {
+  const list = $('#sub-add-list');
+  list.replaceChildren();
+  const visible = subAddVisible();
+  const multi = (subAdd.sub?.sources || []).length > 1;
+  visible.slice(0, 2000).forEach(entry => {
+    const row = node('div', 'builtin-channel');
+    const label = node('label', 'builtin-check');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = subAdd.selected.has(subAddKey(entry));
+    checkbox.disabled = entry.added;
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) subAdd.selected.add(subAddKey(entry)); else subAdd.selected.delete(subAddKey(entry));
+      updateSubAddCount();
+      renderSubAddOrigins();
+    });
+    const detail = node('span');
+    const title = node('strong', '', entry.name);
+    if (entry.added) title.append(node('span', 'badge sub-entry-badge', '已添加'));
+    detail.append(title);
+    let host = '';
+    try { host = new URL(entry.url).host; } catch { host = ''; }
+    detail.append(node('span', 'muted tiny', [entry.group || '未分组', host, multi ? new URL(subAdd.sub.sources.find(src => src.id === entry.source_id)?.url || entry.url).host : ''].filter(Boolean).join(' · ')));
+    label.append(checkbox, detail);
+    const link = node('a', 'builtin-url', '地址 ↗');
+    link.href = entry.url;
+    link.title = entry.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    row.append(label, link);
+    list.append(row);
+  });
+  if (visible.length > 2000) list.append(node('p', 'field-help', `仅显示前 2000 个，请用搜索或分组缩小范围（共 ${visible.length} 个）`));
+  if (!visible.length) list.append(node('p', 'field-help', '没有符合条件的频道'));
+  updateSubAddCount();
+}
+function updateSubAddCount() {
+  const addable = subAdd.entries.filter(e => !e.added).length;
+  $('#sub-add-count').textContent = `已选择 ${subAdd.selected.size} 个 · 目录 ${subAdd.entries.length} 个，可添加 ${addable} 个`;
+  $('#sub-add-submit').disabled = subAdd.submitting || subAdd.selected.size === 0;
+}
+function renderSubAddOrigins() {
+  const container = $('#sub-add-origins');
+  const previous = {};
+  $$('.sub-add-origin', container).forEach(row => { previous[row.dataset.domain] = { mode: $('select[data-field="mode"]', row).value, proxy: $('select[data-field="proxy"]', row).value }; });
+  const chosen = subAdd.entries.filter(e => subAdd.selected.has(subAddKey(e)));
+  const pool = chosen.length ? chosen : subAdd.entries.filter(e => !e.added);
+  const counts = new Map();
+  pool.forEach(e => { const domain = domainOf(e.url); if (domain) counts.set(domain, (counts.get(domain) || 0) + 1); });
+  container.replaceChildren();
+  [...counts.keys()].sort().slice(0, 100).forEach(domain => {
+    const saved = previous[domain] || (subAdd.sub.defaults || []).find(d => d.domain === domain) || { mode: 'relay', proxy: 'direct' };
+    const row = node('div', 'sub-add-origin');
+    row.dataset.domain = domain;
+    const label = node('span', '', domain);
+    label.title = domain;
+    label.append(node('span', 'tiny', `${counts.get(domain)} 个频道${chosen.length ? '已选' : '可添加'}`));
+    const mode = node('select');
+    mode.dataset.field = 'mode';
+    mode.setAttribute('aria-label', `${domain} 的播放方式`);
+    [['relay', '服务器中继'], ['direct', '客户端直连']].forEach(([value, text]) => { const option = node('option', '', text); option.value = value; mode.append(option); });
+    mode.value = saved.mode === 'direct' ? 'direct' : 'relay';
+    const proxy = node('select');
+    proxy.dataset.field = 'proxy';
+    proxy.setAttribute('aria-label', `${domain} 的出站代理`);
+    fillProxySelect(proxy, saved.proxy);
+    row.append(label, mode, proxy);
+    container.append(row);
+  });
+  if (!counts.size) container.append(node('p', 'field-help', '勾选频道后在这里按域名设置播放方式和代理'));
+}
+['#sub-add-source', '#sub-add-domain-filter', '#sub-add-group-filter'].forEach(selector => $(selector).addEventListener('change', renderSubAddList));
+$('#sub-add-search').addEventListener('input', renderSubAddList);
+$('#sub-add-select-all').addEventListener('click', () => {
+  subAddVisible().filter(e => !e.added).forEach(e => subAdd.selected.add(subAddKey(e)));
+  renderSubAddList();
+  renderSubAddOrigins();
+});
+$('#sub-add-select-none').addEventListener('click', () => { subAdd.selected.clear(); renderSubAddList(); renderSubAddOrigins(); });
+$('#sub-add-dialog').addEventListener('cancel', event => { if (subAdd.submitting) event.preventDefault(); });
+$('#sub-add-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (subAdd.submitting || busy || !subAdd.selected.size) return;
+  const items = subAdd.entries.filter(e => subAdd.selected.has(subAddKey(e))).map(e => ({ source_id: e.source_id, name: e.name }));
+  const defaults = $$('.sub-add-origin', $('#sub-add-origins')).map(row => ({ domain: row.dataset.domain, mode: $('select[data-field="mode"]', row).value, proxy: $('select[data-field="proxy"]', row).value }));
+  const controls = $$('input, select, button', event.currentTarget);
+  subAdd.submitting = true;
+  busy = true;
+  controls.forEach(control => { control.disabled = true; });
+  $('#sub-add-submit').textContent = '正在添加…';
+  $('#sub-add-error').textContent = '';
+  $('#sub-add-result').hidden = true;
+  try {
+    const result = await api(`/subscriptions/${encodeURIComponent(subAdd.sub.id)}/channels`, { method: 'POST', body: { items, group: $('#sub-add-group').value.trim(), defaults } });
+    $('#sub-add-result').textContent = `已添加 ${result.added} 个 · 跳过 ${result.skipped} 个 · 失败 ${result.failed} 个`;
+    $('#sub-add-result').hidden = false;
+    $('#sub-add-error').textContent = (result.results || []).filter(item => item.status === 'failed').map(item => `${item.name}：${item.message}`).join('；');
+    (result.results || []).forEach(item => {
+      const requested = items[item.line - 1];
+      if (!requested || item.status === 'failed') return;
+      const entry = subAdd.entries.find(e => e.source_id === requested.source_id && e.name === requested.name);
+      if (entry) entry.added = true;
+    });
+    subAdd.selected.clear();
+    try { await loadState({ background: true }); subAdd.sub = state.subscriptions.find(sub => sub.id === subAdd.sub.id) || subAdd.sub; }
+    catch (error) { $('#sub-add-error').textContent += ` 频道列表刷新失败：${error.message}`; }
+  } catch (error) { $('#sub-add-error').textContent = error.message; }
+  finally {
+    controls.forEach(control => { control.disabled = false; });
+    $('#sub-add-submit').textContent = '添加所选频道';
+    subAdd.submitting = false;
+    busy = false;
+    renderSubAddList();
+    renderSubAddOrigins();
+  }
+});
 function fillSettings() {
   const form = $('#settings-form');
   Object.entries(state.settings).forEach(([key, value]) => { if (form.elements.namedItem(key)) form.elements.namedItem(key).value = String(value); });
@@ -609,19 +798,25 @@ $('#add-subscription').addEventListener('click', () => editSubscription());
 $('#subscription-form').addEventListener('submit', async event => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.currentTarget));
+  const existing = state.subscriptions?.find(sub => sub.id === data.id);
+  data.sources = data.urls.split(/\s+/).map(url => url.trim()).filter(Boolean).map(url => ({ id: existing?.sources?.find(src => src.url === url)?.id || '', url }));
+  delete data.urls;
   data.interval_minutes = Number(data.interval_minutes);
   data.enabled = data.enabled === 'true';
   data.proxy = data.proxy || 'direct';
+  if (existing) data.defaults = existing.defaults || [];
   const button = $('button[type="submit"]', event.currentTarget);
   button.disabled = true; $('#subscription-error').textContent = '';
   try {
     const saved = await api(data.id ? `/subscriptions/${encodeURIComponent(data.id)}` : '/subscriptions', {method: data.id ? 'PUT' : 'POST', body: data});
     $('#subscription-dialog').close();
     await loadState({background:true});
-    toast('订阅已保存，正在获取频道列表…');
+    toast('订阅已保存，正在获取频道目录…');
     await perform(async () => {
-      try { await api(`/subscriptions/${encodeURIComponent(saved.id)}/sync`, {method:'POST'}); toast('订阅同步完成'); }
+      let synced = false;
+      try { await api(`/subscriptions/${encodeURIComponent(saved.id)}/sync`, {method:'POST'}); synced = true; toast('目录已更新'); }
       finally { await loadState({background:true}); }
+      if (synced && !existing) await openSubscriptionAdd(state.subscriptions.find(sub => sub.id === saved.id) || saved);
     });
   } catch (error) { if ($('#subscription-dialog').open) $('#subscription-error').textContent = error.message; else toast(error.message,true); }
   finally { button.disabled = false; }

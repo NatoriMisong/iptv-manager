@@ -87,21 +87,15 @@ func (s *Store) initialize(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	var version int
-	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return err
-	}
-	if version != 0 && version != 5 {
-		return fmt.Errorf("unsupported database schema %d; IPTV Manager 0.4 requires schema version 5 or a new database", version)
-	}
 	for _, stmt := range []string{
-		`CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, group_name TEXT NOT NULL, logo TEXT NOT NULL, enabled INTEGER NOT NULL, sort_order INTEGER NOT NULL, mode TEXT NOT NULL, quality INTEGER NOT NULL, proxy TEXT NOT NULL, source_type TEXT NOT NULL, subscription_id TEXT NOT NULL DEFAULT '', source_key TEXT NOT NULL DEFAULT '', source_missing INTEGER NOT NULL DEFAULT 0, provider_id TEXT NOT NULL DEFAULT '', provider_channel_id TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE IF NOT EXISTS channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, group_name TEXT NOT NULL, logo TEXT NOT NULL, enabled INTEGER NOT NULL, sort_order INTEGER NOT NULL, mode TEXT NOT NULL, quality INTEGER NOT NULL, proxy TEXT NOT NULL, source_type TEXT NOT NULL, subscription_id TEXT NOT NULL DEFAULT '', source_key TEXT NOT NULL DEFAULT '', source_missing INTEGER NOT NULL DEFAULT 0, provider_id TEXT NOT NULL DEFAULT '', provider_channel_id TEXT NOT NULL DEFAULT '', source_id TEXT NOT NULL DEFAULT '', source_group TEXT NOT NULL DEFAULT '')`,
 		`CREATE INDEX IF NOT EXISTS channels_order ON channels(sort_order, id)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS channels_subscription_key ON channels(subscription_id,source_key) WHERE subscription_id<>''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS channels_subscription_key ON channels(subscription_id,source_id,source_key) WHERE subscription_id<>''`,
 		`CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK (id = 1), payload TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS traffic (month TEXT PRIMARY KEY, bytes INTEGER NOT NULL CHECK (bytes >= 0))`,
 		`CREATE TABLE IF NOT EXISTS subscriptions (id TEXT PRIMARY KEY, payload TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS subscription_entries (subscription_id TEXT NOT NULL, source_id TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, logo TEXT NOT NULL, group_name TEXT NOT NULL, position INTEGER NOT NULL, PRIMARY KEY(subscription_id, source_id, name))`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return err
@@ -135,19 +129,19 @@ func (s *Store) initialize(ctx context.Context) error {
 			}
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 5`); err != nil {
+	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 6`); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-const channelFields = "id,name,url,group_name,logo,enabled,sort_order,mode,quality,proxy,source_type,subscription_id,source_key,source_missing,provider_id,provider_channel_id"
+const channelFields = "id,name,url,group_name,logo,enabled,sort_order,mode,quality,proxy,source_type,subscription_id,source_key,source_missing,provider_id,provider_channel_id,source_id,source_group"
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanChannel(row scanner) (core.Channel, error) {
 	var ch core.Channel
-	err := row.Scan(&ch.ID, &ch.Name, &ch.URL, &ch.Group, &ch.Logo, &ch.Enabled, &ch.SortOrder, &ch.Mode, &ch.Quality, &ch.Proxy, &ch.SourceType, &ch.SubscriptionID, &ch.SourceKey, &ch.SourceMissing, &ch.ProviderID, &ch.ProviderChannelID)
+	err := row.Scan(&ch.ID, &ch.Name, &ch.URL, &ch.Group, &ch.Logo, &ch.Enabled, &ch.SortOrder, &ch.Mode, &ch.Quality, &ch.Proxy, &ch.SourceType, &ch.SubscriptionID, &ch.SourceKey, &ch.SourceMissing, &ch.ProviderID, &ch.ProviderChannelID, &ch.SourceID, &ch.SourceGroup)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -176,7 +170,7 @@ func (s *Store) Channel(ctx context.Context, id string) (core.Channel, error) {
 }
 
 func insertChannel(ctx context.Context, tx *sql.Tx, ch core.Channel) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO channels (`+channelFields+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ch.ID, ch.Name, ch.URL, ch.Group, ch.Logo, ch.Enabled, ch.SortOrder, ch.Mode, ch.Quality, ch.Proxy, ch.SourceType, ch.SubscriptionID, ch.SourceKey, ch.SourceMissing, ch.ProviderID, ch.ProviderChannelID)
+	_, err := tx.ExecContext(ctx, `INSERT INTO channels (`+channelFields+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ch.ID, ch.Name, ch.URL, ch.Group, ch.Logo, ch.Enabled, ch.SortOrder, ch.Mode, ch.Quality, ch.Proxy, ch.SourceType, ch.SubscriptionID, ch.SourceKey, ch.SourceMissing, ch.ProviderID, ch.ProviderChannelID, ch.SourceID, ch.SourceGroup)
 	return err
 }
 
@@ -201,7 +195,7 @@ func (s *Store) SaveChannel(ctx context.Context, ch core.Channel) (core.Channel,
 		if err := checkChannelCapacity(ctx, tx, 1); err != nil {
 			return ch, err
 		}
-		ch.SubscriptionID, ch.SourceKey, ch.SourceMissing = "", "", false
+		ch.SubscriptionID, ch.SourceID, ch.SourceKey, ch.SourceGroup, ch.SourceMissing = "", "", "", "", false
 		ch.ID, err = randomHex(12)
 		if err != nil {
 			return ch, err
@@ -231,9 +225,10 @@ func updateChannel(ctx context.Context, tx *sql.Tx, settings core.Settings, ch c
 		}
 		return ch, err
 	}
-	ch.SubscriptionID, ch.SourceKey, ch.SourceMissing, ch.SortOrder = current.SubscriptionID, current.SourceKey, current.SourceMissing, current.SortOrder
+	ch.SubscriptionID, ch.SourceID, ch.SourceKey, ch.SourceGroup, ch.SourceMissing, ch.SortOrder = current.SubscriptionID, current.SourceID, current.SourceKey, current.SourceGroup, current.SourceMissing, current.SortOrder
 	if current.SubscriptionID != "" {
-		ch.Name, ch.URL, ch.Group, ch.Logo, ch.SourceType = current.Name, current.URL, current.Group, current.Logo, current.SourceType
+		// The list owns identity (name) and media (URL, logo); the group is the user's.
+		ch.Name, ch.URL, ch.Logo, ch.SourceType = current.Name, current.URL, current.Logo, current.SourceType
 	}
 	if current.IsBuiltin() || current.SubscriptionID != "" {
 		ch.SourceType, ch.URL = current.SourceType, current.URL
@@ -328,7 +323,7 @@ func (s *Store) UpdateChannels(ctx context.Context, req core.BulkChannelUpdate) 
 }
 
 // DeleteChannels removes the listed channels atomically. Subscription channels
-// are refused because the next sync would recreate them; disable them instead.
+// simply leave the channel list; their catalogue entry stays available.
 func (s *Store) DeleteChannels(ctx context.Context, ids []string) error {
 	if err := channelIDs(ids); err != nil {
 		return err
@@ -339,18 +334,16 @@ func (s *Store) DeleteChannels(ctx context.Context, ids []string) error {
 	}
 	defer tx.Rollback()
 	for _, id := range ids {
-		var subscription string
-		if err := tx.QueryRowContext(ctx, `SELECT subscription_id FROM channels WHERE id=?`, id).Scan(&subscription); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrNotFound
-			}
+		result, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE id=?`, id)
+		if err != nil {
 			return err
 		}
-		if subscription != "" {
-			return invalid("订阅频道随自定义订阅同步，不能单独删除；可以停用频道，或在订阅页清理频道、删除订阅")
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE id=?`, id); err != nil {
+		rows, err := result.RowsAffected()
+		if err != nil {
 			return err
+		}
+		if rows == 0 {
+			return ErrNotFound
 		}
 	}
 	return tx.Commit()
@@ -444,7 +437,7 @@ func (s *Store) Export(ctx context.Context) (core.Backup, error) {
 		return core.Backup{}, err
 	}
 	defer tx.Rollback()
-	b := core.Backup{Version: 5, Channels: make([]core.Channel, 0)}
+	b := core.Backup{Version: 6, Channels: make([]core.Channel, 0)}
 	b.Settings, err = readSettings(ctx, tx)
 	if err != nil {
 		return b, err
@@ -476,7 +469,7 @@ func (s *Store) Export(ctx context.Context) (core.Backup, error) {
 }
 
 func (s *Store) Import(ctx context.Context, b core.Backup) error {
-	if b.Version != 5 {
+	if b.Version != 6 {
 		return invalid("unsupported backup version")
 	}
 	if len(b.Channels) > 1000 {
@@ -492,11 +485,11 @@ func (s *Store) Import(ctx context.Context, b core.Backup) error {
 	channels := make([]core.Channel, len(b.Channels))
 	subs := make(map[string]core.Subscription)
 	for _, sub := range b.Subscriptions {
-		normalized, err := normalizeSubscription(sub)
+		normalized, err := normalizeSubscription(sub, &sub)
 		if err != nil || normalized.ID == "" {
 			return invalid("invalid subscription")
 		}
-		if err := checkProxyRef(settings, normalized.Proxy); err != nil {
+		if err := checkSubscriptionProxies(settings, normalized); err != nil {
 			return invalid("subscription references a missing proxy")
 		}
 		if _, exists := subs[sub.ID]; exists {
@@ -516,12 +509,14 @@ func (s *Store) Import(ctx context.Context, b core.Backup) error {
 			return fmt.Errorf("channel %d: %w", i+1, err)
 		}
 		if ch.SubscriptionID != "" {
-			if _, ok := subs[ch.SubscriptionID]; !ok || !ch.IsStream() || ch.SourceKey == "" || len(ch.SourceKey) > 8200 || keys[ch.SubscriptionID+"\x00"+ch.SourceKey] {
+			sub, ok := subs[ch.SubscriptionID]
+			key := ch.SubscriptionID + "\x00" + ch.SourceID + "\x00" + ch.SourceKey
+			if !ok || !ch.IsStream() || ch.SourceKey != ch.Name || !sub.HasSource(ch.SourceID) || keys[key] {
 				return invalid("invalid subscription channel")
 			}
-			keys[ch.SubscriptionID+"\x00"+ch.SourceKey] = true
+			keys[key] = true
 		} else {
-			ch.SourceKey, ch.SourceMissing = "", false
+			ch.SourceID, ch.SourceKey, ch.SourceGroup, ch.SourceMissing = "", "", "", false
 		}
 		if ch.ID == "" || seen[ch.ID] {
 			return invalid("backup contains missing or duplicate channel IDs")
@@ -545,6 +540,9 @@ func (s *Store) Import(ctx context.Context, b core.Backup) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM subscriptions`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM subscription_entries`); err != nil {
 		return err
 	}
 	for _, sub := range subs {

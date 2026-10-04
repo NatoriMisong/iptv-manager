@@ -53,6 +53,13 @@ func (r *memoryRepo) ClearSubscription(context.Context, string) ([]string, error
 	r.changes++
 	return nil, nil
 }
+func (r *memoryRepo) SubscriptionEntries(context.Context, string) ([]core.SubscriptionEntry, error) {
+	return nil, nil
+}
+func (r *memoryRepo) AddSubscriptionChannels(context.Context, string, core.SubscriptionAddRequest) (core.BulkChannelResult, error) {
+	r.changes++
+	return core.BulkChannelResult{}, nil
+}
 func (r *memoryRepo) SaveProxy(_ context.Context, p core.Proxy) (core.Proxy, error) {
 	r.changes++
 	if p.ID == "" {

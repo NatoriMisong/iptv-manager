@@ -1,6 +1,7 @@
 package core
 
 import (
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -19,7 +20,9 @@ type Channel struct {
 	ProviderID        string `json:"provider_id,omitempty"`
 	ProviderChannelID string `json:"provider_channel_id,omitempty"`
 	SubscriptionID    string `json:"subscription_id,omitempty"`
-	SourceKey         string `json:"source_key,omitempty"`
+	SourceID          string `json:"source_id,omitempty"`    // list inside the subscription
+	SourceKey         string `json:"source_key,omitempty"`   // channel name in that list
+	SourceGroup       string `json:"source_group,omitempty"` // group-title from the list, informational
 	SourceMissing     bool   `json:"source_missing,omitempty"`
 	Group             string `json:"group"`
 	Logo              string `json:"logo"`
@@ -56,18 +59,112 @@ type BulkChannelUpdate struct {
 	Enabled *bool    `json:"enabled,omitempty"`
 }
 
+// Subscription is a catalogue of channels fetched from one or more M3U lists.
+// Syncing refreshes the catalogue and the URLs of channels the user already
+// picked from it; it never adds channels on its own.
 type Subscription struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	URL             string    `json:"url"`
-	Proxy           string    `json:"proxy"` // direct or a saved proxy ID, used when fetching the list
-	IntervalMinutes int       `json:"interval_minutes"`
-	Enabled         bool      `json:"enabled"`
-	Revision        int       `json:"revision"`
-	LastAttempt     time.Time `json:"last_attempt"`
-	LastSync        time.Time `json:"last_sync"`
-	LastError       string    `json:"last_error"`
-	Skipped         int       `json:"skipped"`
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	Sources         []SubscriptionSource `json:"sources"`
+	Proxy           string               `json:"proxy"` // direct or a saved proxy ID, used when fetching the lists
+	IntervalMinutes int                  `json:"interval_minutes"`
+	Enabled         bool                 `json:"enabled"`
+	Defaults        []DomainDefault      `json:"defaults,omitempty"` // playback defaults per channel URL domain
+	Revision        int                  `json:"revision"`
+	LastAttempt     time.Time            `json:"last_attempt"`
+	LastSync        time.Time            `json:"last_sync"` // last run where every list succeeded
+	LastError       string               `json:"last_error"`
+}
+
+// SubscriptionSource is one M3U list URL with its own sync status. The ID is
+// stable for as long as the URL text stays the same.
+type SubscriptionSource struct {
+	ID        string    `json:"id"`
+	URL       string    `json:"url"`
+	LastSync  time.Time `json:"last_sync"`
+	LastError string    `json:"last_error"`
+	Entries   int       `json:"entries"`
+	Skipped   int       `json:"skipped"`
+}
+
+// HasSource reports whether the subscription contains a list with this ID.
+func (sub Subscription) HasSource(id string) bool {
+	for _, src := range sub.Sources {
+		if src.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// DomainDefault is the playback mode and proxy applied to channels whose URL
+// host belongs to Domain (registrable domain such as demo.org, or an IP) when
+// they are added from a list.
+type DomainDefault struct {
+	Domain string `json:"domain"`
+	Mode   string `json:"mode"`
+	Proxy  string `json:"proxy"`
+}
+
+// SiteDomain reduces a host to its registrable domain: a.demo.org and
+// b.demo.org both give demo.org, news.bbc.co.uk gives bbc.co.uk, IP
+// addresses are returned unchanged. It is a heuristic, not a public suffix list.
+func SiteDomain(host string) string {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if host == "" || net.ParseIP(host) != nil {
+		return host
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) <= 2 {
+		return host
+	}
+	n := 2
+	switch labels[len(labels)-2] {
+	case "com", "net", "org", "edu", "gov", "mil", "co", "ac", "or", "ne", "go", "idv":
+		if len(labels[len(labels)-1]) == 2 {
+			n = 3
+		}
+	}
+	return strings.Join(labels[len(labels)-n:], ".")
+}
+
+// URLDomain returns SiteDomain of a URL's host, or "" when it cannot be parsed.
+func URLDomain(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return SiteDomain(u.Hostname())
+}
+
+// SubscriptionEntry is one catalogue row; Added reports whether the user has
+// already created a channel from it.
+type SubscriptionEntry struct {
+	SourceID  string `json:"source_id"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	Logo      string `json:"logo,omitempty"`
+	Group     string `json:"group,omitempty"`
+	Position  int    `json:"position"`
+	Added     bool   `json:"added,omitempty"`
+	ChannelID string `json:"channel_id,omitempty"`
+}
+
+// SubscriptionAddRequest creates channels from catalogue entries. Group, when
+// set, overrides the list group for every new channel; Defaults are matched by
+// URL domain and remembered on the subscription for next time.
+type SubscriptionAddRequest struct {
+	Items    []SubscriptionAddItem `json:"items"`
+	Group    string                `json:"group"`
+	Defaults []DomainDefault       `json:"defaults"`
+}
+type SubscriptionAddItem struct {
+	SourceID string `json:"source_id"`
+	Name     string `json:"name"`
 }
 
 func (ch Channel) IsStream() bool  { return ch.SourceType == "stream" }

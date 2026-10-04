@@ -51,11 +51,11 @@ func TestProxyLifecycleAndReferences(t *testing.T) {
 	if err != nil || core.EffectiveProxy(ch, settings) != "socks5://proxy.example:1081" {
 		t.Fatalf("channel proxy = %+v, %v", ch, err)
 	}
-	sub, err := s.SaveSubscription(testContext, core.Subscription{Name: "订阅", URL: "https://example.com/list.m3u", IntervalMinutes: 60, Enabled: true, Proxy: second.ID})
+	sub, err := s.SaveSubscription(testContext, core.Subscription{Name: "订阅", Sources: []core.SubscriptionSource{{URL: "https://example.com/list.m3u"}}, IntervalMinutes: 60, Enabled: true, Proxy: second.ID})
 	if err != nil || sub.Proxy != second.ID {
 		t.Fatalf("subscription proxy = %+v, %v", sub, err)
 	}
-	if _, err := s.SaveSubscription(testContext, core.Subscription{Name: "坏订阅", URL: "https://example.com/other.m3u", IntervalMinutes: 60, Enabled: true, Proxy: "ffffffffffffffffffffffff"}); !errors.Is(err, ErrValidation) {
+	if _, err := s.SaveSubscription(testContext, core.Subscription{Name: "坏订阅", Sources: []core.SubscriptionSource{{URL: "https://example.com/other.m3u"}}, IntervalMinutes: 60, Enabled: true, Proxy: "ffffffffffffffffffffffff"}); !errors.Is(err, ErrValidation) {
 		t.Fatalf("subscription with unknown proxy accepted: %v", err)
 	}
 	if err := s.SetProviderProxy(testContext, "tvb", first.ID); err != nil {
@@ -153,10 +153,10 @@ func TestImportRejectsOtherVersionsAndDanglingProxies(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, err := s.Export(testContext)
-	if err != nil || before.Version != 5 {
+	if err != nil || before.Version != 6 {
 		t.Fatalf("export = %+v, %v", before, err)
 	}
-	for _, version := range []int{2, 3, 4, 6} {
+	for _, version := range []int{2, 3, 5, 7} {
 		old := before
 		old.Version = version
 		if err := s.Import(testContext, old); !errors.Is(err, ErrValidation) {

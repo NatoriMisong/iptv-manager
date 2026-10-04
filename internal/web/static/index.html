@@ -54,8 +54,8 @@
         <p class="footnote">原始直播直连或中继 · 自定义订阅自动更新 · 来源按需获取 · 不转码</p>
       </section>
       <section id="view-subscriptions" hidden>
-        <div class="page-heading"><div><p class="eyebrow">KEEP YOUR CHANNELS CURRENT</p><h1>自定义订阅</h1><p class="muted">导入任意 M3U 频道列表，定时更新频道名称、分组、图标和直播地址。</p></div><button id="add-subscription" class="primary">＋ 添加订阅</button></div>
-        <section class="panel settings-card"><p class="muted">订阅频道支持逐个选择直连或中继，默认使用全局设置。同步失败保留当前频道；来源中消失的频道标记为失效，再出现时恢复原播放地址。</p><p class="field-help">频道名称和来源信息随订阅更新，播放方式、代理、排序和启停状态由你管理。暂停自动更新后仍可手动同步；“清理频道”会从频道列表移除该订阅导入的全部频道，订阅本身保留。</p></section>
+        <div class="page-heading"><div><p class="eyebrow">KEEP YOUR CHANNELS CURRENT</p><h1>自定义订阅</h1><p class="muted">把一个或多个 M3U 列表变成频道目录，从目录里挑选频道，地址随列表自动更新。</p></div><button id="add-subscription" class="primary">＋ 添加订阅</button></div>
+        <section class="panel settings-card"><p class="muted">同步只刷新目录和已添加频道的地址，不会自动新增频道。点击“添加频道”从目录中勾选，按地址来源选择直连或代理、中继或直连播放。频道以列表中的名称识别，地址变化不影响已添加的频道。</p><p class="field-help">名称、地址和图标随列表同步；分组、播放方式、代理、排序和启停状态由你管理。列表中消失的频道标记失效，再出现时恢复。订阅频道可以单独删除，目录仍可随时重新添加；“清理频道”一次移除该订阅的全部频道，订阅本身保留。</p></section>
         <div id="subscription-list" class="subscription-list"></div>
         <div id="subscriptions-empty" class="empty" hidden><h3>添加你的第一个自定义订阅</h3><p class="muted">填写包含多个频道的 HTTP/HTTPS M3U 列表地址，后续自动更新。</p></div>
       </section>
@@ -86,7 +86,7 @@
     <input name="id" type="hidden"><input name="sort_order" type="hidden" value="0">
     <label id="channel-type-label" for="channel-type">来源类型</label><select id="channel-type" name="source_type"><option value="stream">通用直播源（M3U8 / HTTP）</option><option value="youtube">YouTube 直播</option><option id="channel-builtin-option" value="builtin">网站直播源</option></select>
     <p id="channel-provider-info" class="field-help" hidden></p>
-    <p id="channel-managed" class="field-help" hidden>此频道来自自定义订阅，名称、分组、图标和地址随订阅同步。可以在这里调整播放方式、代理和启停状态。</p>
+    <p id="channel-managed" class="field-help" hidden>此频道来自自定义订阅，名称是它在列表中的身份，地址和图标随列表同步。分组、播放方式、代理和启停状态由你管理。</p><p id="channel-source-group" class="field-help" hidden></p>
     <p id="channel-proxy-note" class="field-help" hidden>此频道的出站代理由“网站直播源”页面按来源统一设置。</p>
     <label for="channel-name">频道名称</label><input id="channel-name" name="name" maxlength="120" required placeholder="例如：新闻频道">
     <label for="channel-url">直播来源地址</label><input id="channel-url" name="url" type="url" required placeholder="https://example.com/live.m3u8"><p id="channel-source-help" class="field-help"></p>
@@ -101,7 +101,7 @@
     <div class="form-grid"><div><label for="bulk-edit-mode">播放方式</label><select id="bulk-edit-mode" name="mode"><option value="">不修改</option><option value="relay">服务器中继</option><option value="direct">客户端直连</option></select></div><div><label for="bulk-edit-enabled">频道状态</label><select id="bulk-edit-enabled" name="enabled"><option value="">不修改</option><option value="true">启用</option><option value="false">停用</option></select></div></div>
     <div class="form-grid"><div><label for="bulk-edit-proxy">出站代理</label><select id="bulk-edit-proxy" name="proxy"></select></div><div><label for="bulk-edit-quality">YouTube 画质上限</label><select id="bulk-edit-quality" name="quality"><option value="">不修改</option><option value="0">使用全局设置</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option><option value="1080">1080p</option></select></div></div>
     <label class="check-label" for="bulk-edit-group-on"><input id="bulk-edit-group-on" type="checkbox"> 修改分组</label><input id="bulk-edit-group" name="group" maxlength="150" placeholder="留空表示清除分组" disabled>
-    <p class="field-help">只会修改选中的项目。自定义订阅频道的分组随订阅同步，网站直播源频道的代理在“网站直播源”页面按来源设置，这两项对相应频道不生效；画质只影响 YouTube 频道。</p>
+    <p class="field-help">只会修改选中的项目。网站直播源频道的代理在“网站直播源”页面按来源设置，对它们不生效；画质只影响 YouTube 频道。</p>
     <p id="bulk-edit-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button id="bulk-edit-submit" type="submit" class="primary">应用到所选频道</button></div>
   </form></dialog>
   <dialog id="builtin-dialog" aria-labelledby="builtin-title"><form id="builtin-form">
@@ -118,10 +118,24 @@
   <dialog id="subscription-dialog" aria-labelledby="subscription-dialog-title"><form id="subscription-form">
     <div class="dialog-heading"><h2 id="subscription-dialog-title">添加自定义订阅</h2><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div><input name="id" type="hidden">
     <label for="subscription-name">订阅名称</label><input id="subscription-name" name="name" required maxlength="150" placeholder="例如：我的电视频道">
-    <label for="subscription-url">M3U 列表地址</label><input id="subscription-url" name="url" type="url" required placeholder="https://example.com/channels.m3u"><p class="field-help">填写包含多个频道的列表地址。单个 M3U8 直播请使用“添加频道”。</p>
+    <label for="subscription-urls">M3U 列表地址</label><textarea id="subscription-urls" name="urls" rows="3" required spellcheck="false" placeholder="https://example.com/channels.m3u&#10;https://backup.example/list.m3u"></textarea><p class="field-help">每行一个列表地址，最多 10 个；同名频道在不同列表中视为不同频道。单个 M3U8 直播请使用“添加频道”。</p>
     <div class="form-grid"><div><label for="subscription-interval">更新间隔（分钟）</label><input id="subscription-interval" name="interval_minutes" type="number" min="5" max="10080" value="60" required></div><div><label for="subscription-enabled">自动更新</label><select id="subscription-enabled" name="enabled"><option value="true">启用</option><option value="false">暂停</option></select></div></div>
-    <label for="subscription-proxy">获取列表时使用的代理</label><select id="subscription-proxy" name="proxy"></select><p class="field-help">只影响下载 M3U 列表。导入的频道默认直连，可在频道编辑中逐个选择代理。</p>
+    <label for="subscription-proxy">获取列表时使用的代理</label><select id="subscription-proxy" name="proxy"></select><p class="field-help">只影响下载 M3U 列表。频道播放用的代理在“添加频道”时按地址来源选择，之后可逐个修改。</p>
     <p id="subscription-error" class="error" role="alert"></p><div class="dialog-footer"><button type="button" class="outline close-dialog">取消</button><button type="submit" class="primary">保存订阅</button></div>
+  </form></dialog>
+  <dialog id="sub-add-dialog" aria-labelledby="sub-add-title"><form id="sub-add-form">
+    <div class="dialog-heading"><div><p class="eyebrow">PICK FROM YOUR LISTS</p><h2 id="sub-add-title">从订阅添加频道</h2></div><button class="icon-button close-dialog" type="button" aria-label="关闭">×</button></div>
+    <p id="sub-add-summary" class="muted"></p>
+    <div class="form-grid sub-add-filters"><div><label for="sub-add-source">列表来源</label><select id="sub-add-source"></select></div><div><label for="sub-add-domain-filter">地址域名</label><select id="sub-add-domain-filter"></select></div></div>
+    <label for="sub-add-group-filter">列表分组</label><select id="sub-add-group-filter"></select>
+    <label for="sub-add-search">搜索频道名称</label><input id="sub-add-search" type="search" placeholder="输入名称筛选" autocomplete="off">
+    <div class="builtin-toolbar"><span id="sub-add-count" class="muted tiny" role="status"></span><button id="sub-add-select-all" type="button" class="quiet">全选当前</button><button id="sub-add-select-none" type="button" class="quiet">清空</button></div>
+    <div id="sub-add-list" class="builtin-channels" role="group" aria-label="选择订阅频道"></div>
+    <h3 class="sub-add-heading">按域名设置播放</h3><p class="field-help">同一域名（如 demo.org，包含它的所有子域名）下的频道共用一组播放方式和出站代理，只影响本次新添加的频道，设置会记住供下次使用。</p>
+    <div id="sub-add-origins" class="sub-add-origins"></div>
+    <label for="sub-add-group">统一分组（可选）</label><input id="sub-add-group" maxlength="150" placeholder="留空则使用列表中的分组">
+    <p id="sub-add-error" class="error" role="alert"></p><p id="sub-add-result" role="status" hidden></p>
+    <div class="dialog-footer"><button type="button" class="outline close-dialog">关闭</button><button id="sub-add-submit" type="submit" class="primary">添加所选频道</button></div>
   </form></dialog>
   <dialog id="bulk-dialog" aria-labelledby="bulk-title">
     <form id="bulk-form">

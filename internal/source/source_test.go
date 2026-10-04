@@ -11,25 +11,25 @@ import (
 
 func TestM3UParsing(t *testing.T) {
 	base, _ := url.Parse("https://provider.example/lists/channels.m3u?token=private")
-	body := "\ufeff#EXTM3U x-tvg-url=\"https://epg.example/feed.xml\"\r\n#EXTINF:-1 tvg-id=\"news\" tvg-logo=\"../logo.png\" group-title=\"新闻,直播\",频道一\r\n../live/index.m3u8?token=a%2Bb\r\n#EXTINF:-1,频道二\n#EXTGRP:体育\nhttps://media.example/live.ts\n#EXTINF:-1,不支持\nudp://239.1.1.1:1234\n#EXTINF:-1,私网\nhttp://127.0.0.1/stream\n#EXTINF:-1 tvg-logo=\"https://CDN.example/img/台标|1.png\",片段\nHTTPS://Media.Example/pxx.php?shk_cid=hdgd01#.m3u8\n#EXTINF:-1,\nhttps://media.example/live/{台}|a^b.m3u8?u=x|y\n"
+	body := "\ufeff#EXTM3U x-tvg-url=\"https://epg.example/feed.xml\"\r\n#EXTINF:-1 tvg-id=\"news\" tvg-logo=\"../logo.png\" group-title=\"新闻,直播\",频道一\r\n../live/index.m3u8?token=a%2Bb\r\n#EXTINF:-1,频道二\n#EXTGRP:体育\nhttps://media.example/live.ts\n#EXTINF:-1,不支持\nudp://239.1.1.1:1234\n#EXTINF:-1,私网\nhttp://127.0.0.1/stream\n#EXTINF:-1 tvg-logo=\"https://CDN.example/img/台标|1.png\",片段\nHTTPS://Media.Example/pxx.php?shk_cid=hdgd01#.m3u8\n#EXTINF:-1 tvg-name=\"GSTV\",\nhttps://media.example/live/{台}|a^b.m3u8?u=x|y\n#EXTINF:-1 tvg-id=\"other\",频道一\nhttps://backup.example/one.m3u8\n#EXTINF:-1,\nhttps://media.example/nameless.m3u8\n"
 	list, err := ParseM3U([]byte(body), base)
-	if err != nil || len(list.Entries) != 4 || list.Skipped != 2 {
+	if err != nil || len(list.Entries) != 4 || list.Skipped != 4 {
 		t.Fatalf("parse: %+v %v", list, err)
 	}
-	if e := list.Entries[2]; e.URL != "https://media.example/pxx.php?shk_cid=hdgd01#.m3u8" || e.Key != "url:"+e.URL || e.Logo != "https://CDN.example/img/台标|1.png" {
+	if e := list.Entries[2]; e.URL != "https://media.example/pxx.php?shk_cid=hdgd01#.m3u8" || e.Name != "片段" || e.Logo != "https://CDN.example/img/台标|1.png" {
 		t.Fatalf("fragment and verbatim URL: %+v", e)
 	}
-	if e := list.Entries[3]; e.URL != "https://media.example/live/{台}|a^b.m3u8?u=x|y" || e.Name != "media.example/live/{台}|a^b.m3u8" {
-		t.Fatalf("special characters re-encoded: %+v", e)
+	if e := list.Entries[3]; e.URL != "https://media.example/live/{台}|a^b.m3u8?u=x|y" || e.Name != "GSTV" {
+		t.Fatalf("tvg-name fallback or re-encoded URL: %+v", e)
 	}
 	first := list.Entries[0]
-	if first.Name != "频道一" || first.Key != "id:news" || first.Group != "新闻,直播" || first.URL != "https://provider.example/live/index.m3u8?token=a%2Bb" || first.Logo != "https://provider.example/logo.png" {
+	if first.Name != "频道一" || first.Group != "新闻,直播" || first.URL != "https://provider.example/live/index.m3u8?token=a%2Bb" || first.Logo != "https://provider.example/logo.png" {
 		t.Fatalf("metadata: %+v", first)
 	}
-	if list.Entries[1].Group != "体育" || list.Entries[1].Key != "url:https://media.example/live.ts" {
+	if list.Entries[1].Group != "体育" || list.Entries[1].Name != "频道二" {
 		t.Fatalf("fallback: %+v", list.Entries[1])
 	}
-	for _, bad := range []string{"<html>login</html>", "#EXTM3U\n", "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nsegment.ts", "#EXTM3U\n#EXTINF:-1 tvg-id=\"x\",A\nhttps://a.example/a\n#EXTINF:-1 tvg-id=\"x\",B\nhttps://a.example/b", strings.Repeat("a", MaxPlaylistBytes+1)} {
+	for _, bad := range []string{"<html>login</html>", "#EXTM3U\n", "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nsegment.ts", "#EXTM3U\n#EXTINF:-1,\nhttps://a.example/a\n", strings.Repeat("a", MaxPlaylistBytes+1)} {
 		if _, err := ParseM3U([]byte(bad), base); err == nil {
 			t.Fatal("invalid playlist accepted")
 		}

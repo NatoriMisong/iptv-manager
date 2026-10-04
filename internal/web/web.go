@@ -46,6 +46,8 @@ type Repository interface {
 	SaveSubscription(context.Context, core.Subscription) (core.Subscription, error)
 	DeleteSubscription(context.Context, string) error
 	ClearSubscription(context.Context, string) ([]string, error)
+	SubscriptionEntries(context.Context, string) ([]core.SubscriptionEntry, error)
+	AddSubscriptionChannels(context.Context, string, core.SubscriptionAddRequest) (core.BulkChannelResult, error)
 	UpdateChannels(context.Context, core.BulkChannelUpdate) error
 	DeleteChannels(context.Context, []string) error
 	SaveProxy(context.Context, core.Proxy) (core.Proxy, error)
@@ -115,6 +117,8 @@ func New(repo Repository, media Media, opts Options) (http.Handler, error) {
 	mux.HandleFunc("DELETE /api/subscriptions/{id}", s.auth(s.deleteSubscription))
 	mux.HandleFunc("POST /api/subscriptions/{id}/sync", s.auth(s.syncSubscription))
 	mux.HandleFunc("POST /api/subscriptions/{id}/clear", s.auth(s.clearSubscription))
+	mux.HandleFunc("GET /api/subscriptions/{id}/entries", s.auth(s.subscriptionEntries))
+	mux.HandleFunc("POST /api/subscriptions/{id}/channels", s.auth(s.addSubscriptionChannels))
 	mux.HandleFunc("PUT /api/channels/{id}", s.auth(s.saveChannel))
 	mux.HandleFunc("DELETE /api/channels/{id}", s.auth(s.deleteChannel))
 	mux.HandleFunc("POST /api/channels/{id}/refresh", s.auth(s.refresh))
@@ -421,6 +425,34 @@ func (s *server) deleteSubscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	respond(w, 200, map[string]bool{"ok": true})
+}
+func (s *server) subscriptionEntries(w http.ResponseWriter, r *http.Request) {
+	entries, err := s.repo.SubscriptionEntries(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			fail(w, 404, "订阅不存在")
+		} else {
+			fail(w, 500, "无法读取订阅频道目录")
+		}
+		return
+	}
+	respond(w, 200, map[string]any{"entries": entries})
+}
+func (s *server) addSubscriptionChannels(w http.ResponseWriter, r *http.Request) {
+	var req core.SubscriptionAddRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	result, err := s.repo.AddSubscriptionChannels(r.Context(), r.PathValue("id"), req)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			fail(w, 404, "订阅不存在")
+		} else {
+			batchError(w, err, "添加失败，本批次未写入，请稍后重试")
+		}
+		return
+	}
+	respond(w, 200, result)
 }
 func (s *server) clearSubscription(w http.ResponseWriter, r *http.Request) {
 	ids, err := s.repo.ClearSubscription(r.Context(), r.PathValue("id"))
